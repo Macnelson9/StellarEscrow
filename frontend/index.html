@@ -56,6 +56,94 @@
                     <li role="none"><a href="#help" role="menuitem" class="nav-link">Help Center</a></li>
                     <li role="none"><a href="#api-docs" role="menuitem" class="nav-link">API Documentation</a></li>
                 </ul>
+                
+                <!-- Wallet Connection -->
+                <div id="wallet-container" class="wallet-container" role="region" aria-label="Wallet connection">
+                    <button 
+                        id="wallet-connect-btn"
+                        class="btn btn-wallet"
+                        type="button"
+                        aria-label="Connect Stellar wallet"
+                        aria-expanded="false"
+                        aria-controls="wallet-menu"
+                    >
+                        <span class="wallet-icon" aria-hidden="true">◆</span>
+                        <span class="wallet-text">Connect Wallet</span>
+                    </button>
+                    
+                    <!-- Wallet Menu -->
+                    <div id="wallet-menu" class="wallet-menu" hidden role="menu" aria-label="Wallet options">
+                        <div class="wallet-menu-header">
+                            <h3>Select Wallet</h3>
+                        </div>
+                        <button 
+                            type="button"
+                            class="wallet-option"
+                            data-provider="freighter"
+                            role="menuitem"
+                            aria-label="Connect with Freighter wallet"
+                        >
+                            <span class="wallet-option-icon">🔐</span>
+                            <span class="wallet-option-name">Freighter</span>
+                        </button>
+                        <button 
+                            type="button"
+                            class="wallet-option"
+                            data-provider="albedo"
+                            role="menuitem"
+                            aria-label="Connect with Albedo wallet"
+                        >
+                            <span class="wallet-option-icon">🛡️</span>
+                            <span class="wallet-option-name">Albedo</span>
+                        </button>
+                        <button 
+                            type="button"
+                            class="wallet-option"
+                            data-provider="walletconnect"
+                            role="menuitem"
+                            aria-label="Connect with WalletConnect"
+                        >
+                            <span class="wallet-option-icon">📱</span>
+                            <span class="wallet-option-name">WalletConnect</span>
+                        </button>
+                    </div>
+                    
+                    <!-- Connected Wallet Display -->
+                    <div id="wallet-connected" class="wallet-connected" hidden>
+                        <div class="wallet-info">
+                            <span id="wallet-provider-badge" class="wallet-provider-badge"></span>
+                            <span id="wallet-address-display" class="wallet-address-display"></span>
+                        </div>
+                        <button 
+                            id="wallet-menu-toggle"
+                            type="button"
+                            class="wallet-menu-toggle"
+                            aria-label="Wallet menu"
+                            aria-expanded="false"
+                            aria-controls="wallet-dropdown"
+                        >
+                            ⋮
+                        </button>
+                        <div id="wallet-dropdown" class="wallet-dropdown" hidden role="menu">
+                            <button 
+                                type="button"
+                                class="wallet-dropdown-item"
+                                id="switch-wallet-btn"
+                                role="menuitem"
+                            >
+                                Switch Wallet
+                            </button>
+                            <button 
+                                type="button"
+                                class="wallet-dropdown-item"
+                                id="disconnect-wallet-btn"
+                                role="menuitem"
+                            >
+                                Disconnect
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </nav>
     </header>
@@ -499,6 +587,7 @@
     <!-- Toast notifications container -->
     <div id="toast-container" class="toast-container" role="alert" aria-live="assertive" aria-label="Notifications"></div>
 
+    <script src="wallet.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
