@@ -73,6 +73,8 @@ pub fn emit_unpaused(env: &Env, admin: Address) {
 pub fn emit_emergency_withdraw(env: &Env, to: Address, amount: u64) {
     env.events()
         .publish((symbol_short!("emrg_wd"),), (to, amount));
+}
+
 pub fn emit_metadata_updated(env: &Env, trade_id: u64) {
     env.events()
         .publish((symbol_short!("meta_upd"),), trade_id);

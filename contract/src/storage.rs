@@ -1,100 +1,108 @@
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 use crate::errors::ContractError;
 use crate::types::{TierConfig, Trade, TradeTemplate, UserTierInfo};
 
-const INITIALIZED: &str = "INIT";
-const ADMIN: &str = "ADMIN";
-const USDC_TOKEN: &str = "USDC";
-const FEE_BPS: &str = "FEE_BPS";
-const TRADE_COUNTER: &str = "COUNTER";
-const ACCUMULATED_FEES: &str = "ACC_FEES";
-const TRADE_PREFIX: &str = "TRADE";
-const ARBITRATOR_PREFIX: &str = "ARB";
-const PAUSED: &str = "PAUSED";
-const TIER_CONFIG: &str = "TIER_CFG";
-const USER_TIER_PREFIX: &str = "UTIER";
-const TEMPLATE_COUNTER: &str = "TMPL_CTR";
-const TEMPLATE_PREFIX: &str = "TMPL";
+// Instance storage keys (short symbols, cheapest encoding)
+fn key_init() -> Symbol { symbol_short!("INIT") }
+fn key_admin() -> Symbol { symbol_short!("ADMIN") }
+fn key_usdc() -> Symbol { symbol_short!("USDC") }
+fn key_fee_bps() -> Symbol { symbol_short!("FEE_BPS") }
+fn key_counter() -> Symbol { symbol_short!("COUNTER") }
+fn key_acc_fees() -> Symbol { symbol_short!("ACC_FEES") }
+fn key_paused() -> Symbol { symbol_short!("PAUSED") }
+fn key_tier_cfg() -> Symbol { symbol_short!("TIER_CFG") }
+fn key_tmpl_ctr() -> Symbol { symbol_short!("TMPL_CTR") }
+
+// Persistent storage key prefixes
+const TRADE_PREFIX: &str = "T";
+const ARB_PREFIX: &str = "A";
+const USER_TIER_PREFIX: &str = "U";
+const TEMPLATE_PREFIX: &str = "P";
 
 // Initialization
 pub fn is_initialized(env: &Env) -> bool {
-    env.storage().instance().has(&INITIALIZED)
-}
-
-pub fn has_initialized(env: &Env) -> bool {
-    env.storage().instance().has(&INITIALIZED)
+    env.storage().instance().has(&key_init())
 }
 
 pub fn set_initialized(env: &Env) {
-    env.storage().instance().set(&INITIALIZED, &true);
+    env.storage().instance().set(&key_init(), &true);
 }
 
 // Admin
 pub fn set_admin(env: &Env, admin: &Address) {
-    env.storage().instance().set(&ADMIN, admin);
+    env.storage().instance().set(&key_admin(), admin);
 }
 
 pub fn get_admin(env: &Env) -> Result<Address, ContractError> {
     env.storage()
         .instance()
-        .get(&ADMIN)
+        .get(&key_admin())
         .ok_or(ContractError::NotInitialized)
 }
 
 // USDC Token
 pub fn set_usdc_token(env: &Env, token: &Address) {
-    env.storage().instance().set(&USDC_TOKEN, token);
+    env.storage().instance().set(&key_usdc(), token);
 }
 
 pub fn get_usdc_token(env: &Env) -> Result<Address, ContractError> {
     env.storage()
         .instance()
-        .get(&USDC_TOKEN)
+        .get(&key_usdc())
         .ok_or(ContractError::NotInitialized)
 }
 
 // Fee BPS
 pub fn set_fee_bps(env: &Env, fee_bps: u32) {
-    env.storage().instance().set(&FEE_BPS, &fee_bps);
+    env.storage().instance().set(&key_fee_bps(), &fee_bps);
 }
 
 pub fn get_fee_bps(env: &Env) -> Result<u32, ContractError> {
     env.storage()
         .instance()
-        .get(&FEE_BPS)
+        .get(&key_fee_bps())
         .ok_or(ContractError::NotInitialized)
 }
 
 // Trade Counter
 pub fn set_trade_counter(env: &Env, counter: u64) {
-    env.storage().instance().set(&TRADE_COUNTER, &counter);
+    env.storage().instance().set(&key_counter(), &counter);
 }
 
 pub fn get_trade_counter(env: &Env) -> Result<u64, ContractError> {
     env.storage()
         .instance()
-        .get(&TRADE_COUNTER)
+        .get(&key_counter())
         .ok_or(ContractError::NotInitialized)
 }
 
 pub fn increment_trade_counter(env: &Env) -> Result<u64, ContractError> {
-    let current = get_trade_counter(env)?;
-    let next = current.checked_add(1).ok_or(ContractError::Overflow)?;
+    let next = get_trade_counter(env)?
+        .checked_add(1)
+        .ok_or(ContractError::Overflow)?;
     set_trade_counter(env, next);
     Ok(next)
 }
 
 // Accumulated Fees
 pub fn set_accumulated_fees(env: &Env, fees: u64) {
-    env.storage().instance().set(&ACCUMULATED_FEES, &fees);
+    env.storage().instance().set(&key_acc_fees(), &fees);
 }
 
 pub fn get_accumulated_fees(env: &Env) -> Result<u64, ContractError> {
     env.storage()
         .instance()
-        .get(&ACCUMULATED_FEES)
+        .get(&key_acc_fees())
         .ok_or(ContractError::NotInitialized)
+}
+
+/// Add `delta` to accumulated fees in a single read-modify-write.
+pub fn add_accumulated_fees(env: &Env, delta: u64) -> Result<(), ContractError> {
+    let current: u64 = env.storage().instance().get(&key_acc_fees()).unwrap_or(0);
+    let new_fees = current.checked_add(delta).ok_or(ContractError::Overflow)?;
+    env.storage().instance().set(&key_acc_fees(), &new_fees);
+    Ok(())
 }
 
 // Trades
@@ -113,37 +121,36 @@ pub fn get_trade(env: &Env, trade_id: u64) -> Result<Trade, ContractError> {
 
 // Arbitrators
 pub fn save_arbitrator(env: &Env, arbitrator: &Address) {
-    let key = (ARBITRATOR_PREFIX, arbitrator);
+    let key = (ARB_PREFIX, arbitrator);
     env.storage().persistent().set(&key, &true);
 }
 
 pub fn remove_arbitrator(env: &Env, arbitrator: &Address) {
-    let key = (ARBITRATOR_PREFIX, arbitrator);
+    let key = (ARB_PREFIX, arbitrator);
     env.storage().persistent().remove(&key);
 }
 
 pub fn has_arbitrator(env: &Env, arbitrator: &Address) -> bool {
-    let key = (ARBITRATOR_PREFIX, arbitrator);
+    let key = (ARB_PREFIX, arbitrator);
     env.storage().persistent().has(&key)
 }
 
-// ---------------------------------------------------------------------------
 // Pause state
-// ---------------------------------------------------------------------------
-
 pub fn set_paused(env: &Env, paused: bool) {
-    env.storage().instance().set(&PAUSED, &paused);
+    env.storage().instance().set(&key_paused(), &paused);
 }
 
 pub fn is_paused(env: &Env) -> bool {
-    env.storage().instance().get(&PAUSED).unwrap_or(false)
+    env.storage().instance().get(&key_paused()).unwrap_or(false)
+}
+
 // Tier config
 pub fn save_tier_config(env: &Env, config: &TierConfig) {
-    env.storage().instance().set(&TIER_CONFIG, config);
+    env.storage().instance().set(&key_tier_cfg(), config);
 }
 
 pub fn get_tier_config(env: &Env) -> Option<TierConfig> {
-    env.storage().instance().get(&TIER_CONFIG)
+    env.storage().instance().get(&key_tier_cfg())
 }
 
 // Per-user tier
@@ -159,14 +166,14 @@ pub fn get_user_tier(env: &Env, user: &Address) -> Option<UserTierInfo> {
 
 // Template storage
 pub fn get_template_counter(env: &Env) -> u64 {
-    env.storage().instance().get(&TEMPLATE_COUNTER).unwrap_or(0)
+    env.storage().instance().get(&key_tmpl_ctr()).unwrap_or(0)
 }
 
-pub fn increment_template_counter(env: &Env) -> Result<u64, crate::errors::ContractError> {
+pub fn increment_template_counter(env: &Env) -> Result<u64, ContractError> {
     let next = get_template_counter(env)
         .checked_add(1)
-        .ok_or(crate::errors::ContractError::Overflow)?;
-    env.storage().instance().set(&TEMPLATE_COUNTER, &next);
+        .ok_or(ContractError::Overflow)?;
+    env.storage().instance().set(&key_tmpl_ctr(), &next);
     Ok(next)
 }
 
@@ -175,10 +182,10 @@ pub fn save_template(env: &Env, template_id: u64, template: &TradeTemplate) {
     env.storage().persistent().set(&key, template);
 }
 
-pub fn get_template(env: &Env, template_id: u64) -> Result<TradeTemplate, crate::errors::ContractError> {
+pub fn get_template(env: &Env, template_id: u64) -> Result<TradeTemplate, ContractError> {
     let key = (TEMPLATE_PREFIX, template_id);
     env.storage()
         .persistent()
         .get(&key)
-        .ok_or(crate::errors::ContractError::TemplateNotFound)
+        .ok_or(ContractError::TemplateNotFound)
 }

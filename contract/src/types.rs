@@ -69,6 +69,14 @@ pub struct TradeMetadata {
     pub entries: Vec<MetadataEntry>,
 }
 
+/// Option wrapper for TradeMetadata (Soroban contracttype requires enum for optional custom structs)
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OptionalMetadata {
+    None,
+    Some(TradeMetadata),
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Trade {
@@ -79,8 +87,7 @@ pub struct Trade {
     pub fee: u64,
     pub arbitrator: Option<Address>,
     pub status: TradeStatus,
-    /// Optional structured metadata (product info, shipping details, etc.)
-    pub metadata: Option<TradeMetadata>,
+    pub metadata: OptionalMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +103,7 @@ pub struct TemplateTerms {
     pub description: String,
     pub default_arbitrator: Option<Address>,
     pub fixed_amount: Option<u64>,
-    pub default_metadata: Option<TradeMetadata>,
+    pub default_metadata: OptionalMetadata,
 }
 
 #[contracttype]

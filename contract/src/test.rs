@@ -1,0 +1,164 @@
+#![cfg(test)]
+
+extern crate std;
+
+use soroban_sdk::{testutils::Address as _, token, Address, Env};
+
+use crate::{OptionalMetadata, StellarEscrowContract, StellarEscrowContractClient, TradeStatus};
+
+fn setup() -> (Env, Address, Address, Address, Address, Address, StellarEscrowContractClient<'static>) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let arbitrator = Address::generate(&env);
+
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+
+    // Mint to buyer
+    token::StellarAssetClient::new(&env, &token_addr).mint(&buyer, &1_000_000_000i128);
+
+    let contract_id = env.register_contract(None, StellarEscrowContract);
+    let client = StellarEscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &token_addr, &100u32); // 1% fee
+
+    (env, token_addr, admin, seller, buyer, arbitrator, client)
+}
+
+fn fund(env: &Env, token_addr: &Address, buyer: &Address, contract: &Address, amount: i128) {
+    token::Client::new(env, token_addr).approve(buyer, contract, &amount, &200u32);
+}
+
+#[test]
+fn test_initialize_and_fee() {
+    let (_, _, _, _, _, _, client) = setup();
+    assert_eq!(client.get_platform_fee_bps(), 100);
+}
+
+#[test]
+fn test_initialize_twice_fails() {
+    let (env, token_addr, admin, _, _, _, client) = setup();
+    assert!(client.try_initialize(&admin, &token_addr, &100u32).is_err());
+}
+
+#[test]
+fn test_register_and_remove_arbitrator() {
+    let (_, _, _, _, _, arbitrator, client) = setup();
+    client.register_arbitrator(&arbitrator);
+    assert!(client.is_arbitrator_registered(&arbitrator));
+    client.remove_arbitrator_fn(&arbitrator);
+    assert!(!client.is_arbitrator_registered(&arbitrator));
+}
+
+#[test]
+fn test_update_fee() {
+    let (_, _, _, _, _, _, client) = setup();
+    client.update_fee(&200u32);
+    assert_eq!(client.get_platform_fee_bps(), 200);
+}
+
+#[test]
+fn test_update_fee_invalid() {
+    let (_, _, _, _, _, _, client) = setup();
+    assert!(client.try_update_fee(&10001u32).is_err());
+}
+
+#[test]
+fn test_create_trade() {
+    let (_, _, _, seller, buyer, _, client) = setup();
+    let id = client.create_trade(&seller, &buyer, &1_000_000u64, &None, &OptionalMetadata::None);
+    assert_eq!(id, 1);
+    let trade = client.get_trade(&id);
+    assert_eq!(trade.status, TradeStatus::Created);
+    assert_eq!(trade.amount, 1_000_000u64);
+}
+
+#[test]
+fn test_create_trade_zero_amount_fails() {
+    let (_, _, _, seller, buyer, _, client) = setup();
+    assert!(client.try_create_trade(&seller, &buyer, &0u64, &None, &OptionalMetadata::None).is_err());
+}
+
+#[test]
+fn test_fund_trade() {
+    let (env, token_addr, _, seller, buyer, _, client) = setup();
+    let id = client.create_trade(&seller, &buyer, &1_000_000u64, &None, &OptionalMetadata::None);
+    fund(&env, &token_addr, &buyer, &client.address, 1_000_000);
+    client.fund_trade(&id);
+    assert_eq!(client.get_trade(&id).status, TradeStatus::Funded);
+}
+
+#[test]
+fn test_complete_and_confirm_trade() {
+    let (env, token_addr, _, seller, buyer, _, client) = setup();
+    let amount = 1_000_000u64;
+    let id = client.create_trade(&seller, &buyer, &amount, &None, &OptionalMetadata::None);
+    fund(&env, &token_addr, &buyer, &client.address, amount as i128);
+    client.fund_trade(&id);
+    client.complete_trade(&id);
+    client.confirm_receipt(&id);
+
+    // fee = 1% of 1_000_000 = 10_000; seller receives 990_000
+    assert_eq!(token::Client::new(&env, &token_addr).balance(&seller), 990_000i128);
+    assert_eq!(client.get_accumulated_fees(), 10_000u64);
+}
+
+#[test]
+fn test_cancel_trade() {
+    let (_, _, _, seller, buyer, _, client) = setup();
+    let id = client.create_trade(&seller, &buyer, &1_000_000u64, &None, &OptionalMetadata::None);
+    client.cancel_trade(&id);
+    assert_eq!(client.get_trade(&id).status, TradeStatus::Cancelled);
+}
+
+#[test]
+fn test_dispute_and_resolve_to_buyer() {
+    let (env, token_addr, _, seller, buyer, arbitrator, client) = setup();
+    client.register_arbitrator(&arbitrator);
+    let amount = 1_000_000u64;
+    let id = client.create_trade(&seller, &buyer, &amount, &Some(arbitrator.clone()), &OptionalMetadata::None);
+    fund(&env, &token_addr, &buyer, &client.address, amount as i128);
+    client.fund_trade(&id);
+    client.raise_dispute(&id, &buyer);
+
+    let before = token::Client::new(&env, &token_addr).balance(&buyer);
+    client.resolve_dispute(&id, &crate::DisputeResolution::ReleaseToBuyer);
+    let after = token::Client::new(&env, &token_addr).balance(&buyer);
+    assert_eq!(after - before, 990_000i128);
+}
+
+#[test]
+fn test_withdraw_fees() {
+    let (env, token_addr, _, seller, buyer, _, client) = setup();
+    let amount = 1_000_000u64;
+    let id = client.create_trade(&seller, &buyer, &amount, &None, &OptionalMetadata::None);
+    fund(&env, &token_addr, &buyer, &client.address, amount as i128);
+    client.fund_trade(&id);
+    client.complete_trade(&id);
+    client.confirm_receipt(&id);
+
+    let recipient = Address::generate(&env);
+    client.withdraw_fees(&recipient);
+    assert_eq!(token::Client::new(&env, &token_addr).balance(&recipient), 10_000i128);
+    assert_eq!(client.get_accumulated_fees(), 0u64);
+}
+
+#[test]
+fn test_pause_and_unpause() {
+    let (_, _, _, seller, buyer, _, client) = setup();
+    client.pause();
+    assert!(client.is_paused());
+    assert!(client.try_create_trade(&seller, &buyer, &1_000_000u64, &None, &OptionalMetadata::None).is_err());
+    client.unpause();
+    assert!(!client.is_paused());
+}
+
+#[test]
+fn test_no_fees_to_withdraw_fails() {
+    let (env, _, _, _, _, _, client) = setup();
+    let recipient = Address::generate(&env);
+    assert!(client.try_withdraw_fees(&recipient).is_err());
+}
