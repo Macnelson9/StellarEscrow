@@ -170,6 +170,21 @@ pub fn emit_fees_distributed(env: &Env, to: Address, amount: u64) {
     env.events()
         .publish((symbol_short!("fee_dst"),), (to, amount));
 }
+
+pub fn emit_privacy_set(env: &Env, trade_id: u64) {
+    env.events()
+        .publish((symbol_short!("priv_set"),), trade_id);
+}
+
+pub fn emit_disclosure_granted(env: &Env, trade_id: u64, grantee: Address) {
+    env.events()
+        .publish((symbol_short!("disc_gr"),), (trade_id, grantee));
+}
+
+pub fn emit_disclosure_revoked(env: &Env, trade_id: u64, grantee: Address) {
+    env.events()
+        .publish((symbol_short!("disc_rv"),), (trade_id, grantee));
+}
 pub fn emit_arb_rated(env: &Env, arbitrator: Address, trade_id: u64, rater: Address, stars: u32) {
     env.events()
         .publish((symbol_short!("arb_rate"),), (arbitrator, trade_id, rater, stars));

@@ -208,6 +208,35 @@ pub struct Proposal {
 }
 
 // ---------------------------------------------------------------------------
+// Privacy Features
+// ---------------------------------------------------------------------------
+
+/// Max length for an encrypted data pointer (e.g. IPFS CID or URL)
+pub const PRIVACY_DATA_PTR_MAX_LEN: u32 = 256;
+
+/// Commitment to sensitive trade data stored off-chain (e.g. SHA-256 hex)
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TradePrivacy {
+    /// Hash of the plaintext trade details (commitment scheme)
+    pub data_hash: String,
+    /// Encrypted data pointer (e.g. IPFS CID) — only parties can decrypt
+    pub encrypted_ptr: Option<String>,
+    /// Whether arbitration is private (arbitrator identity hidden from public)
+    pub private_arbitration: bool,
+}
+
+/// A selective disclosure grant — allows `grantee` to access private trade data
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisclosureGrant {
+    pub trade_id: u64,
+    pub grantee: Address,
+    /// Encrypted decryption key for the grantee (encrypted with grantee's public key off-chain)
+    pub encrypted_key: String,
+}
+
+// ---------------------------------------------------------------------------
 // Trade Templates
 // ---------------------------------------------------------------------------
 
