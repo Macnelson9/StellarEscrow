@@ -3,6 +3,7 @@
 mod errors;
 mod events;
 mod governance;
+mod privacy;
 mod storage;
 mod subscription;
 mod templates;
@@ -15,9 +16,9 @@ use types::{METADATA_MAX_ENTRIES, METADATA_MAX_VALUE_LEN};
 
 pub use errors::ContractError;
 pub use types::{
-    DisputeResolution, MetadataEntry, Proposal, ProposalAction, ProposalStatus,
+    DisclosureGrant, DisputeResolution, MetadataEntry, Proposal, ProposalAction, ProposalStatus,
     Subscription, SubscriptionTier, TierConfig, TemplateTerms, TemplateVersion,
-    Trade, TradeMetadata, TradeStatus, TradeTemplate, UserTier, UserTierInfo,
+    Trade, TradeMetadata, TradePrivacy, TradeStatus, TradeTemplate, UserTier, UserTierInfo,
 };
 
 use storage::{
@@ -724,5 +725,68 @@ impl StellarEscrowContract {
     /// Get total number of proposals created.
     pub fn get_proposal_count(env: Env) -> u64 {
         governance::proposal_count(&env)
+    }
+
+    // -------------------------------------------------------------------------
+    // Privacy Features
+    // -------------------------------------------------------------------------
+
+    /// Set privacy settings for a trade (seller or buyer only).
+    pub fn set_trade_privacy(
+        env: Env,
+        caller: Address,
+        trade_id: u64,
+        data_hash: soroban_sdk::String,
+        encrypted_ptr: Option<soroban_sdk::String>,
+        private_arbitration: bool,
+    ) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        caller.require_auth();
+        privacy::set_trade_privacy(&env, &caller, trade_id, data_hash, encrypted_ptr, private_arbitration)
+    }
+
+    /// Grant selective disclosure to a third party.
+    pub fn grant_disclosure(
+        env: Env,
+        caller: Address,
+        trade_id: u64,
+        grantee: Address,
+        encrypted_key: soroban_sdk::String,
+    ) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        caller.require_auth();
+        privacy::grant_disclosure(&env, &caller, trade_id, grantee, encrypted_key)
+    }
+
+    /// Revoke a disclosure grant.
+    pub fn revoke_disclosure(
+        env: Env,
+        caller: Address,
+        trade_id: u64,
+        grantee: Address,
+    ) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        caller.require_auth();
+        privacy::revoke_disclosure(&env, &caller, trade_id, grantee)
+    }
+
+    /// Get privacy settings for a trade.
+    pub fn get_trade_privacy(env: Env, trade_id: u64) -> Option<TradePrivacy> {
+        privacy::get_privacy(&env, trade_id)
+    }
+
+    /// Get a disclosure grant for a specific grantee.
+    pub fn get_disclosure_grant(
+        env: Env,
+        trade_id: u64,
+        grantee: Address,
+    ) -> Result<DisclosureGrant, ContractError> {
+        privacy::get_grant(&env, trade_id, &grantee)
     }
 }

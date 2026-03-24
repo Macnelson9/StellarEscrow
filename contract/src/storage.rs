@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env};
 
 use crate::errors::ContractError;
-use crate::types::{TierConfig, Trade, TradeTemplate, UserTierInfo, Subscription, Proposal};
+use crate::types::{TierConfig, Trade, TradeTemplate, UserTierInfo, Subscription, Proposal, TradePrivacy, DisclosureGrant};
 
 const INITIALIZED: &str = "INIT";
 const ADMIN: &str = "ADMIN";
@@ -22,6 +22,8 @@ const PROPOSAL_COUNTER: &str = "PROP_CTR";
 const PROPOSAL_PREFIX: &str = "PROP";
 const VOTE_PREFIX: &str = "VOTE";
 const DELEGATE_PREFIX: &str = "DELEG";
+const TRADE_PRIVACY_PREFIX: &str = "TPRIV";
+const DISCLOSURE_PREFIX: &str = "DISC";
 
 // Initialization
 pub fn is_initialized(env: &Env) -> bool {
@@ -251,3 +253,26 @@ pub fn remove_delegate(env: &Env, delegator: &Address) {
     let key = (DELEGATE_PREFIX, delegator);
     env.storage().persistent().remove(&key);
 }
+
+// Privacy
+pub fn save_trade_privacy(env: &Env, trade_id: u64, privacy: &TradePrivacy) {
+    let key = (TRADE_PRIVACY_PREFIX, trade_id);
+    env.storage().persistent().set(&key, privacy);
+}
+pub fn get_trade_privacy(env: &Env, trade_id: u64) -> Option<TradePrivacy> {
+    let key = (TRADE_PRIVACY_PREFIX, trade_id);
+    env.storage().persistent().get(&key)
+}
+pub fn save_disclosure_grant(env: &Env, trade_id: u64, grantee: &Address, grant: &DisclosureGrant) {
+    let key = (DISCLOSURE_PREFIX, trade_id, grantee);
+    env.storage().persistent().set(&key, grant);
+}
+pub fn get_disclosure_grant(env: &Env, trade_id: u64, grantee: &Address) -> Option<DisclosureGrant> {
+    let key = (DISCLOSURE_PREFIX, trade_id, grantee);
+    env.storage().persistent().get(&key)
+}
+pub fn remove_disclosure_grant(env: &Env, trade_id: u64, grantee: &Address) {
+    let key = (DISCLOSURE_PREFIX, trade_id, grantee);
+    env.storage().persistent().remove(&key);
+}
+

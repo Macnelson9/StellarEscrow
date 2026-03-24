@@ -34,4 +34,7 @@ pub enum ContractError {
     ProposalNotPassed = 28,
     ProposalAlreadyExecuted = 29,
     VotingEnded = 30,
+    PrivacyDataTooLong = 31,
+    DisclosureGrantNotFound = 32,
+    DisclosureUnauthorized = 33,
 }
