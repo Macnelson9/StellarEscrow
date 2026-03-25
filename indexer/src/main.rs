@@ -4,6 +4,7 @@ use std::sync::Arc;
 use axum::{
     middleware,
     routing::{delete, get, post},
+    routing::{get, post},
     Router,
 };
 use clap::Parser;
@@ -16,11 +17,15 @@ mod config;
 mod database;
 mod error;
 mod event_monitor;
+mod file_handlers;
 mod handlers;
+mod help;
 mod models;
 mod rate_limit;
 mod rate_limit_handlers;
+mod storage;
 mod websocket;
+mod fraud_service;
 
 #[cfg(test)]
 mod test;
@@ -28,10 +33,16 @@ mod test;
 use config::Config;
 use database::Database;
 use event_monitor::EventMonitor;
+use file_handlers::{delete_file, download_file, list_files, upload_file};
 use handlers::*;
 use rate_limit::RateLimiter;
 use rate_limit_handlers::*;
+use storage::StorageService;
 use websocket::WebSocketManager;
+use help::{
+    get_contact, get_docs, get_faqs, get_tutorial_by_id, get_tutorials, help_index, search_help,
+};
+use fraud_service::FraudDetectionService;
 
 #[derive(Parser)]
 #[command(name = "stellar-escrow-indexer")]
@@ -59,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize database
     let db_pool = PgPool::connect(&config.database.url).await?;
     sqlx::migrate!("./migrations").run(&db_pool).await?;
-    let database = Arc::new(Database::new(db_pool));
+    let database = Arc::new(Database::new(db_pool.clone()));
 
     // Initialize WebSocket manager
     let (tx, _rx) = broadcast::channel(100);
@@ -67,12 +78,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize rate limiter
     let rate_limiter = Arc::new(RateLimiter::new(config.rate_limit.clone()));
+    // Initialize file storage service
+    let storage_service = Arc::new(
+        StorageService::new(db_pool, &config.storage.base_dir).await?,
+    );
+    // Initialize Fraud Detection Service
+    let fraud_service = Arc::new(FraudDetectionService::new(database.clone()).await);
 
     // Initialize event monitor
     let event_monitor = EventMonitor::new(
         config.stellar.clone(),
         database.clone(),
         ws_manager.clone(),
+        fraud_service.clone(),
     );
 
     // Start event monitoring in background
@@ -89,15 +107,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/admin/rate-limits/blacklist", post(add_to_blacklist).delete(remove_from_blacklist))
         .route("/admin/rate-limits/tier", post(set_ip_tier))
         .with_state(rate_limiter.clone());
+    let file_router = Router::new()
+        .route("/files", get(list_files))
+        .route("/files/:category", post(upload_file))
+        .route("/files/:id", get(download_file).delete(delete_file))
+        .with_state(storage_service);
 
     let app = Router::new()
+        .route("/", get(api_index))
         .route("/health", get(health_check))
+        .route("/status", get(get_status))
+        .route("/stats", get(get_stats))
         .route("/events", get(get_events))
         .route("/events/:id", get(get_event_by_id))
         .route("/events/trade/:trade_id", get(get_events_by_trade_id))
         .route("/events/type/:event_type", get(get_events_by_type))
         .route("/events/replay", post(replay_events))
+        .route("/search", get(global_search))
+        .route("/search/trades", get(search_trades))
+        .route("/search/discovery", get(discover_entities))
+        .route("/search/suggestions", get(search_suggestions))
+        .route("/search/history", get(search_history))
+        .route("/fraud/alerts", get(get_fraud_alerts))
+        .route("/fraud/review", post(update_fraud_review))
         .route("/ws", get(ws_handler))
+        // Help center
+        .route("/help", get(help_index))
+        .route("/help/faqs", get(get_faqs))
+        .route("/help/tutorials", get(get_tutorials))
+        .route("/help/tutorials/:id", get(get_tutorial_by_id))
+        .route("/help/docs", get(get_docs))
+        .route("/help/search", get(search_help))
+        .route("/help/contact", get(get_contact))
         .with_state(AppState {
             database,
             ws_manager,
@@ -108,6 +149,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rate_limit_middleware,
         ))
         .layer(CorsLayer::permissive());
+        .merge(file_router)
+        .layer(CorsLayer::permissive());
+            fraud_service,
+        });
 
     // Start server
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
@@ -120,10 +165,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     monitor_handle.await?;
 
     Ok(())
-}
-
-#[derive(Clone)]
-struct AppState {
-    database: Arc<Database>,
-    ws_manager: Arc<WebSocketManager>,
 }

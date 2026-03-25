@@ -8,6 +8,7 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub stellar: StellarConfig,
     pub rate_limit: RateLimitConfig,
+    pub storage: StorageConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +44,9 @@ pub struct RateLimitConfig {
     /// IPs that are always blocked.
     #[serde(default)]
     pub blacklist: Vec<IpAddr>,
+pub struct StorageConfig {
+    /// Base directory for uploaded files
+    pub base_dir: String,
 }
 
 impl Config {
@@ -73,6 +77,8 @@ impl Default for Config {
                 admin_rpm: 6000,
                 whitelist: vec![],
                 blacklist: vec![],
+            storage: StorageConfig {
+                base_dir: "./uploads".to_string(),
             },
         }
     }

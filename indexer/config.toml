@@ -18,3 +18,5 @@ elevated_rpm = 300
 admin_rpm = 6000
 # whitelist = ["127.0.0.1"]
 # blacklist = []
+[storage]
+base_dir = "./uploads"
