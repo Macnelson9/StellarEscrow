@@ -5,6 +5,7 @@ use axum::{
     extract::State,
     response::Json,
     routing::{delete, get, post},
+    extract::FromRef,
     middleware,
     routing::{delete, get, post},
     routing::{get, post},
@@ -22,6 +23,7 @@ mod error;
 mod event_monitor;
 mod file_handlers;
 mod handlers;
+mod health;
 mod help;
 mod models;
 mod rate_limit;
@@ -36,6 +38,8 @@ mod test;
 use config::Config;
 use database::Database;
 use event_monitor::EventMonitor;
+use handlers::{AppState, *};
+use health::{alerts, liveness, metrics, readiness, status_page, HealthMonitor, HealthState};
 use file_handlers::{delete_file, download_file, list_files, upload_file};
 use handlers::*;
 use rate_limit::RateLimiter;
@@ -74,6 +78,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = PgPool::connect(&config.database.url).await?;
     sqlx::migrate!("./migrations").run(&db_pool).await?;
     let database = Arc::new(Database::new(db_pool.clone()));
+
+    // Initialize health monitor
+    let health_monitor = Arc::new(HealthMonitor::new(
+        db_pool.clone(),
+        config.stellar.horizon_url.clone(),
+    ));
+    let health_state = HealthState {
+        monitor: health_monitor.clone(),
+    };
+
+    // Start metrics persistence loop in background
+    let metrics_monitor = health_monitor.clone();
+    tokio::spawn(async move {
+        metrics_monitor.run_metrics_loop().await;
+    });
 
     // Initialize WebSocket manager
     let (tx, _rx) = broadcast::channel(100);
@@ -118,6 +137,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/", get(api_index))
+        // Legacy liveness (kept for backward compat)
+        .route("/health", get(liveness))
+        // Health monitoring endpoints
+        .route("/health/live", get(liveness))
+        .route("/health/ready", get(readiness))
+        .route("/health/metrics", get(metrics))
+        .route("/health/alerts", get(alerts))
+        .route("/status", get(status_page))
         .route("/health", get(health_check))
         .route("/status", get(get_status))
         .route("/stats", get(get_stats))
@@ -151,6 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(AppState {
             database,
             ws_manager,
+            health: health_state,
         })
         .merge(admin_router)
         .layer(middleware::from_fn_with_state(
@@ -174,4 +202,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     monitor_handle.await?;
 
     Ok(())
+}
+
+impl FromRef<AppState> for HealthState {
+    fn from_ref(state: &AppState) -> Self {
+        state.health.clone()
+    }
 }
