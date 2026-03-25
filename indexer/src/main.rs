@@ -2,6 +2,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
+    middleware,
+    routing::{delete, get, post},
     routing::{get, post},
     Router,
 };
@@ -19,6 +21,8 @@ mod file_handlers;
 mod handlers;
 mod help;
 mod models;
+mod rate_limit;
+mod rate_limit_handlers;
 mod storage;
 mod websocket;
 mod fraud_service;
@@ -31,6 +35,8 @@ use database::Database;
 use event_monitor::EventMonitor;
 use file_handlers::{delete_file, download_file, list_files, upload_file};
 use handlers::*;
+use rate_limit::RateLimiter;
+use rate_limit_handlers::*;
 use storage::StorageService;
 use websocket::WebSocketManager;
 use help::{
@@ -70,6 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, _rx) = broadcast::channel(100);
     let ws_manager = Arc::new(WebSocketManager::new(tx.clone()));
 
+    // Initialize rate limiter
+    let rate_limiter = Arc::new(RateLimiter::new(config.rate_limit.clone()));
     // Initialize file storage service
     let storage_service = Arc::new(
         StorageService::new(db_pool, &config.storage.base_dir).await?,
@@ -93,6 +101,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Build application with routes
+    let admin_router = Router::new()
+        .route("/admin/rate-limits", get(get_rate_limit_stats))
+        .route("/admin/rate-limits/whitelist", post(add_to_whitelist).delete(remove_from_whitelist))
+        .route("/admin/rate-limits/blacklist", post(add_to_blacklist).delete(remove_from_blacklist))
+        .route("/admin/rate-limits/tier", post(set_ip_tier))
+        .with_state(rate_limiter.clone());
     let file_router = Router::new()
         .route("/files", get(list_files))
         .route("/files/:category", post(upload_file))
@@ -129,6 +143,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             database,
             ws_manager,
         })
+        .merge(admin_router)
+        .layer(middleware::from_fn_with_state(
+            rate_limiter,
+            rate_limit_middleware,
+        ))
+        .layer(CorsLayer::permissive());
         .merge(file_router)
         .layer(CorsLayer::permissive());
             fraud_service,
@@ -139,7 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting server on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     // Wait for monitor to finish (shouldn't happen in normal operation)
     monitor_handle.await?;

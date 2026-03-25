@@ -29,6 +29,11 @@ pub enum AppError {
     #[error("Internal server error")]
     InternalServerError,
 
+    #[error("Rate limit exceeded")]
+    RateLimited,
+
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
     #[error("File not found")]
     FileNotFound,
 
@@ -58,6 +63,8 @@ impl IntoResponse for AppError {
             AppError::InvalidEventData(_) => (StatusCode::BAD_REQUEST, "Invalid event data"),
             AppError::EventNotFound => (StatusCode::NOT_FOUND, "Event not found"),
             AppError::InternalServerError => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
+            AppError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded"),
+            AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "Forbidden"),
             AppError::FileNotFound => (StatusCode::NOT_FOUND, "File not found"),
             AppError::FileTooLarge(_) => (StatusCode::PAYLOAD_TOO_LARGE, "File too large"),
             AppError::InvalidMimeType(_) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, "Unsupported file type"),
