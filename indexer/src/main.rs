@@ -21,6 +21,7 @@ mod help;
 mod models;
 mod storage;
 mod websocket;
+mod fraud_service;
 
 #[cfg(test)]
 mod test;
@@ -35,6 +36,7 @@ use websocket::WebSocketManager;
 use help::{
     get_contact, get_docs, get_faqs, get_tutorial_by_id, get_tutorials, help_index, search_help,
 };
+use fraud_service::FraudDetectionService;
 
 #[derive(Parser)]
 #[command(name = "stellar-escrow-indexer")]
@@ -72,12 +74,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_service = Arc::new(
         StorageService::new(db_pool, &config.storage.base_dir).await?,
     );
+    // Initialize Fraud Detection Service
+    let fraud_service = Arc::new(FraudDetectionService::new(database.clone()).await);
 
     // Initialize event monitor
     let event_monitor = EventMonitor::new(
         config.stellar.clone(),
         database.clone(),
         ws_manager.clone(),
+        fraud_service.clone(),
     );
 
     // Start event monitoring in background
@@ -95,12 +100,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(storage_service);
 
     let app = Router::new()
+        .route("/", get(api_index))
         .route("/health", get(health_check))
         .route("/events", get(get_events))
         .route("/events/:id", get(get_event_by_id))
         .route("/events/trade/:trade_id", get(get_events_by_trade_id))
         .route("/events/type/:event_type", get(get_events_by_type))
         .route("/events/replay", post(replay_events))
+        .route("/search", get(global_search))
+        .route("/search/trades", get(search_trades))
+        .route("/search/discovery", get(discover_entities))
+        .route("/search/suggestions", get(search_suggestions))
+        .route("/search/history", get(search_history))
+        .route("/fraud/alerts", get(get_fraud_alerts))
+        .route("/fraud/review", post(update_fraud_review))
         .route("/ws", get(ws_handler))
         // Help center
         .route("/help", get(help_index))
@@ -116,6 +129,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .merge(file_router)
         .layer(CorsLayer::permissive());
+            fraud_service,
+        });
 
     // Start server
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
@@ -128,10 +143,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     monitor_handle.await?;
 
     Ok(())
-}
-
-#[derive(Clone)]
-struct AppState {
-    database: Arc<Database>,
-    ws_manager: Arc<WebSocketManager>,
 }

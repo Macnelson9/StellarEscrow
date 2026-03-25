@@ -64,11 +64,19 @@ impl IntoResponse for AppError {
             AppError::InvalidFileCategory => (StatusCode::BAD_REQUEST, "Invalid file category"),
             AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "Access denied"),
             AppError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Storage error"),
+        let (status, code, message) = match &self {
+            AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", "Database error"),
+            AppError::StellarSdk(_) => (StatusCode::INTERNAL_SERVER_ERROR, "STELLAR_ERROR", "Stellar network error"),
+            AppError::Serialization(_) => (StatusCode::BAD_REQUEST, "INVALID_FORMAT", "Invalid data format"),
+            AppError::HttpClient(_) => (StatusCode::INTERNAL_SERVER_ERROR, "NETWORK_ERROR", "Network error"),
+            AppError::InvalidEventData(_) => (StatusCode::BAD_REQUEST, "INVALID_EVENT_DATA", "Invalid event data"),
+            AppError::EventNotFound => (StatusCode::NOT_FOUND, "EVENT_NOT_FOUND", "Event not found"),
+            AppError::InternalServerError => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Internal server error"),
         };
 
+        let detail = self.to_string();
         let body = Json(json!({
-            "error": error_message,
-            "message": self.to_string()
+            "error": { "code": code, "message": message, "detail": detail }
         }));
 
         (status, body).into_response()
