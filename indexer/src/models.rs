@@ -89,6 +89,16 @@ pub struct EventQuery {
     pub to_ledger: Option<i64>,
 }
 
+/// Paginated response wrapper for list endpoints.
+#[derive(Debug, Serialize)]
+pub struct PagedResponse<T: Serialize> {
+    pub items: Vec<T>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+    pub has_more: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayRequest {
     pub from_ledger: i64,
@@ -147,4 +157,100 @@ pub struct EventStats {
 pub struct StatsResponse {
     pub total_events: i64,
     pub by_type: Vec<EventStats>,
+// ---- File storage models ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct FileRecord {
+    pub id: Uuid,
+    pub owner_id: String,
+    pub file_type: String,
+    pub original_name: String,
+    pub stored_name: String,
+    pub mime_type: String,
+    pub size_bytes: i64,
+    pub checksum: String,
+    pub trade_id: Option<i64>,
+    pub is_compressed: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FileListQuery {
+    pub owner_id: String,
+    pub file_type: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalSearchQuery {
+    pub q: String,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeSearchQuery {
+    pub q: Option<String>,
+    pub status: Option<String>,
+    pub seller: Option<String>,
+    pub buyer: Option<String>,
+    pub min_amount: Option<u64>,
+    pub max_amount: Option<u64>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryQuery {
+    pub q: Option<String>,
+    pub role: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuggestionQuery {
+    pub q: String,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryQuery {
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct TradeSearchResult {
+    pub trade_id: i64,
+    pub seller: String,
+    pub buyer: String,
+    pub amount: i64,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DiscoveryResult {
+    pub address: String,
+    pub role: String,
+    pub seen_count: i64,
+    pub last_seen: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SearchSuggestion {
+    pub term: String,
+    pub hits: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SearchHistoryEntry {
+    pub id: i64,
+    pub query_text: String,
+    pub search_type: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalSearchResponse {
+    pub trades: Vec<TradeSearchResult>,
+    pub users: Vec<DiscoveryResult>,
+    pub arbitrators: Vec<DiscoveryResult>,
+    pub suggestions: Vec<SearchSuggestion>,
 }
