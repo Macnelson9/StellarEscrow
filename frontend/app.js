@@ -4,6 +4,7 @@
  */
 
 import { setLocale, getLocale, formatCurrency, formatDate } from './i18n.js';
+import { registerServiceWorker, initOfflineIndicator, promptInstall, isInstallable, subscribePush } from './pwa.js';
 
 (function() {
     'use strict';
@@ -1013,6 +1014,30 @@ import { setLocale, getLocale, formatCurrency, formatDate } from './i18n.js';
             langSelect.addEventListener('change', (e) => {
                 setLocale(e.target.value);
                 announce(document.documentElement.lang === 'ar' ? 'تم تغيير اللغة' : 'Language changed');
+            });
+        }
+
+        // Initialize PWA
+        const swReg = await registerServiceWorker();
+        initOfflineIndicator();
+
+        // Install banner
+        document.addEventListener('pwa:installable', () => {
+            const banner = $('#install-banner');
+            if (banner) banner.hidden = false;
+        });
+        $('#install-btn')?.addEventListener('click', async () => {
+            const accepted = await promptInstall();
+            if (accepted) $('#install-banner').hidden = true;
+        });
+        $('#install-dismiss')?.addEventListener('click', () => {
+            $('#install-banner').hidden = true;
+        });
+
+        // Push notifications (subscribe after SW ready)
+        if (swReg) {
+            document.addEventListener('pwa:push-subscribe', async () => {
+                await subscribePush(swReg);
             });
         }
 

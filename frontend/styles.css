@@ -2557,3 +2557,67 @@ body.rtl .lang-switcher select {
     padding-left: var(--space-md);
     padding-right: var(--space-sm);
 }
+
+/* ============================================
+   Progressive Web App (PWA) Styles
+   ============================================ */
+
+/* Offline indicator */
+.offline-indicator {
+    position: fixed;
+    bottom: var(--space-md);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--color-warning);
+    color: #000;
+    padding: var(--space-sm) var(--space-lg);
+    border-radius: 999px;
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+body.offline .offline-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+/* Install banner */
+.install-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-primary);
+}
+
+.install-banner span {
+    flex: 1;
+}
+
+.btn-ghost {
+    background: transparent;
+    border: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    padding: var(--space-xs);
+}
+
+.btn-ghost:hover {
+    color: var(--color-text-primary);
+}
+
+/* Standalone mode adjustments */
+@media (display-mode: standalone) {
+    .install-banner {
+        display: none !important;
+    }
+    header {
+        padding-top: env(safe-area-inset-top);
+    }
+}

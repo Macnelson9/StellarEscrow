@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="StellarEscrow - Accessible decentralized escrow dashboard for peer-to-peer USDC trades on Stellar blockchain">
     <meta name="theme-color" content="#1a1a2e">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="StellarEscrow">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
     <title>StellarEscrow Dashboard</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,6 +36,18 @@
 
     <!-- Live region for announcements -->
     <div id="live-region" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Offline indicator -->
+    <div id="offline-indicator" class="offline-indicator" role="status" aria-live="polite" hidden>
+        <span aria-hidden="true">⚡</span> You're offline — showing cached data
+    </div>
+
+    <!-- PWA install banner -->
+    <div id="install-banner" class="install-banner" hidden>
+        <span>Install StellarEscrow for a faster, app-like experience.</span>
+        <button id="install-btn" type="button" class="btn btn-sm">Install</button>
+        <button id="install-dismiss" type="button" class="btn btn-sm btn-ghost" aria-label="Dismiss">✕</button>
+    </div>
 
     <header role="banner">
         <nav role="navigation" aria-label="Main navigation">
