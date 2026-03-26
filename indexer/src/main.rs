@@ -18,6 +18,7 @@ use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 
 mod auth;
+mod cache;
 mod config;
 mod database;
 mod error;
@@ -78,8 +79,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load(&args.config)?;
     info!("Loaded configuration from {}", args.config);
 
-    // Initialize database
-    let db_pool = PgPool::connect(&config.database.url).await?;
+    // Initialize database with tuned connection pool
+    let db_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(config.database.max_connections)
+        .min_connections(config.database.min_connections)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(&config.database.url)
+        .await?;
     sqlx::migrate!("./migrations").run(&db_pool).await?;
     let database = Arc::new(Database::new(db_pool.clone()));
 

@@ -11,6 +11,8 @@ pub struct Config {
     pub storage: StorageConfig,
     #[serde(default)]
     pub notification: NotificationConfig,
+    #[serde(default)]
+    pub cache: CacheConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,7 +23,32 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     pub url: String,
+    /// sqlx connection pool max size (default: 10)
+    #[serde(default = "default_pool_size")]
+    pub max_connections: u32,
+    /// sqlx connection pool min idle (default: 2)
+    #[serde(default = "default_min_connections")]
+    pub min_connections: u32,
 }
+
+fn default_pool_size() -> u32 { 10 }
+fn default_min_connections() -> u32 { 2 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CacheConfig {
+    /// Redis URL, e.g. redis://localhost:6379. Leave empty to disable.
+    #[serde(default)]
+    pub redis_url: String,
+    /// Default TTL for cached API responses (seconds, default: 30)
+    #[serde(default = "default_cache_ttl")]
+    pub default_ttl_secs: u64,
+    /// TTL for event list responses (seconds, default: 10)
+    #[serde(default = "default_events_ttl")]
+    pub events_ttl_secs: u64,
+}
+
+fn default_cache_ttl() -> u64 { 30 }
+fn default_events_ttl() -> u64 { 10 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StellarConfig {
