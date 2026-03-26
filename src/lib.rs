@@ -1,5 +1,8 @@
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 mod admin;
 mod analytics;
 mod audit;
@@ -13,6 +16,8 @@ mod templates;
 mod theme;
 mod tiers;
 mod trade_detail;
+mod trade_form;
+mod fund_trade;
 mod types;
 mod users;
 
@@ -80,6 +85,67 @@ fn validate_metadata(meta: &TradeMetadata) -> Result<(), ContractError> {
         }
     }
     Ok(())
+}
+
+/// Internal helper used by [`trade_form::confirm_trade`] to create a trade
+/// without going through the public contract entry-point (which requires
+/// `seller.require_auth()` — already enforced by the caller).
+pub(crate) fn lib_create_trade(
+    env: &Env,
+    seller: Address,
+    buyer: Address,
+    amount: u64,
+    arbitrator: Option<Address>,
+    metadata: OptionalTradeMetadata,
+) -> Result<u64, ContractError> {
+    use types::TimelineEntry;
+
+    if !is_initialized(env) {
+        return Err(ContractError::NotInitialized);
+    }
+    if is_paused(env) {
+        return Err(ContractError::ContractPaused);
+    }
+    if amount == 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+    if let Some(ref arb) = arbitrator {
+        if !has_arbitrator(env, arb) {
+            return Err(ContractError::ArbitratorNotRegistered);
+        }
+    }
+    if let OptionalTradeMetadata::Some(ref meta) = metadata {
+        validate_metadata(meta)?;
+    }
+    let trade_id = increment_trade_counter(env)?;
+    let base_fee_bps = get_fee_bps(env)?;
+    let fee_bps = tiers::effective_fee_bps(env, &seller, base_fee_bps);
+    let fee = amount
+        .checked_mul(fee_bps as u64)
+        .ok_or(ContractError::Overflow)?
+        .checked_div(10_000)
+        .ok_or(ContractError::Overflow)?;
+    let now = env.ledger().sequence();
+    let trade = Trade {
+        id: trade_id,
+        seller: seller.clone(),
+        buyer: buyer.clone(),
+        amount,
+        fee,
+        arbitrator,
+        status: TradeStatus::Created,
+        created_at: now,
+        updated_at: now,
+        metadata,
+    };
+    save_trade(env, trade_id, &trade);
+    index_trade_for_address(env, &seller, trade_id);
+    index_trade_for_address(env, &buyer, trade_id);
+    append_timeline_entry(env, trade_id, TimelineEntry { status: TradeStatus::Created, ledger: now });
+    users::record_trade_created(env, &seller, &buyer, amount);
+    admin::on_trade_created(env, amount);
+    events::emit_trade_created(env, trade_id, seller, buyer, amount);
+    Ok(trade_id)
 }
 
 #[contract]
@@ -184,7 +250,7 @@ impl StellarEscrowContract {
         buyer: Address,
         amount: u64,
         arbitrator: Option<Address>,
-        metadata: Option<TradeMetadata>,
+        metadata: OptionalTradeMetadata,
     ) -> Result<u64, ContractError> {
         if !is_initialized(&env) { return Err(ContractError::NotInitialized); }
         require_not_paused(&env)?;

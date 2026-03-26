@@ -1,5 +1,7 @@
 #![no_std]
 
+mod analytics;
+mod amm;
 mod errors;
 mod events;
 mod governance;
@@ -382,6 +384,7 @@ impl StellarEscrowContract {
         events::emit_trade_created(&env, trade_id, seller.clone(), buyer.clone(), amount);
         events::emit_compliance_passed(&env, trade_id, seller, buyer, amount);
         events::emit_trade_created(&env, trade_id, seller, buyer, amount, trade.currency);
+        analytics::on_trade_created(&env, amount);
         Ok(trade_id)
     }
 
@@ -405,10 +408,8 @@ impl StellarEscrowContract {
         trade.status = TradeStatus::Funded;
         save_trade(&env, trade_id, &trade);
         events::emit_trade_funded(&env, trade_id);
+        analytics::on_trade_funded(&env);
         Ok(())
-    }
-
-    /// Seller marks trade as completed
     pub fn complete_trade(env: Env, trade_id: u64) -> Result<(), ContractError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -451,10 +452,8 @@ impl StellarEscrowContract {
         tiers::record_volume(&env, &trade.seller, trade.amount)?;
         tiers::record_volume(&env, &trade.buyer, trade.amount)?;
         events::emit_trade_confirmed(&env, trade_id, payout, trade.fee);
+        analytics::on_trade_completed(&env, trade.fee);
         Ok(())
-    }
-
-    /// Raise a dispute
     pub fn raise_dispute(env: Env, trade_id: u64, caller: Address) -> Result<(), ContractError> {
         if !is_initialized(&env) {
             return Err(ContractError::NotInitialized);
@@ -488,10 +487,8 @@ impl StellarEscrowContract {
             save_arbitrator_reputation(&env, arb, &rep);
         }
         events::emit_dispute_raised(&env, trade_id, caller);
+        analytics::on_trade_disputed(&env);
         Ok(())
-    }
-
-    /// Resolve a dispute (arbitrator only).
     /// Use `DisputeResolution::Partial { buyer_bps }` for a split:
     /// `buyer_bps` is the buyer's share of the net payout in basis points (0–10000).
     pub fn resolve_dispute(
@@ -578,11 +575,14 @@ impl StellarEscrowContract {
         token_client.transfer(&env.current_contract_address(), &recipient, &(payout as i128));
         // Single read-modify-write for fees
         add_accumulated_fees(&env, trade.fee)?;
+        let resolution_code: u8 = match resolution {
+            DisputeResolution::ReleaseToBuyer => 0,
+            DisputeResolution::ReleaseToSeller => 1,
+            DisputeResolution::Partial { .. } => 2,
+        };
+        analytics::on_dispute_resolved(&env, &arbitrator, resolution_code);
         events::emit_dispute_resolved(&env, trade_id, resolution, recipient);
-        Ok(())
-    }
-
-    /// Submit a 1–5 star rating for the arbitrator of a resolved dispute.
+        Ok(()) for the arbitrator of a resolved dispute.
     /// Only the buyer or seller of the trade may rate, once each.
     pub fn rate_arbitrator(env: Env, trade_id: u64, rater: Address, stars: u32) -> Result<(), ContractError> {
         if !is_initialized(&env) {
@@ -632,10 +632,8 @@ impl StellarEscrowContract {
         trade.status = TradeStatus::Cancelled;
         save_trade(&env, trade_id, &trade);
         events::emit_trade_cancelled(&env, trade_id);
-        Ok(())
-    }
-
-    /// Claim a time-locked release: anyone can call this once the expiry has
+        analytics::on_trade_cancelled(&env);
+        Ok(()): anyone can call this once the expiry has
     /// passed and the trade is Funded or Completed (not Disputed/Cancelled).
     /// Funds are released to the seller minus the platform fee.
     pub fn claim_time_release(env: Env, trade_id: u64) -> Result<(), ContractError> {
@@ -1476,6 +1474,119 @@ impl StellarEscrowContract {
         grantee: Address,
     ) -> Result<DisclosureGrant, ContractError> {
         privacy::get_grant(&env, trade_id, &grantee)
+    }
+
+    // -----------------------------------------------------------------------
+    // Analytics
+    // -----------------------------------------------------------------------
+
+    /// Return raw on-chain platform metrics (volume, trade counts, fees).
+    pub fn get_platform_metrics(env: Env) -> analytics::PlatformMetrics {
+        analytics::get_metrics(&env)
+    }
+
+    /// Return derived platform statistics: success rate, dispute rate, active trades.
+    pub fn get_platform_stats(env: Env) -> analytics::PlatformStats {
+        analytics::get_stats(&env)
+    }
+
+    /// Return performance metrics for a specific arbitrator.
+    pub fn get_arbitrator_analytics(env: Env, arbitrator: Address) -> analytics::ArbitratorMetrics {
+        analytics::get_arb_metrics(&env, &arbitrator)
+    // AMM — Automated Market Making
+    // -----------------------------------------------------------------------
+
+    /// Create a new constant-product liquidity pool for a token pair.
+    /// `fee_bps` is the swap fee in basis points (e.g. 30 = 0.30 %).
+    /// Returns the new pool id.
+    pub fn amm_create_pool(
+        env: Env,
+        token_a: Address,
+        token_b: Address,
+        fee_bps: u32,
+    ) -> Result<u64, ContractError> {
+        require_initialized(&env)?;
+        amm::create_pool(&env, token_a, token_b, fee_bps)
+    }
+
+    /// Add liquidity to a pool.
+    /// `min_shares` enforces slippage protection on the minted LP shares.
+    /// Returns the number of LP shares minted.
+    pub fn amm_add_liquidity(
+        env: Env,
+        pool_id: u64,
+        provider: Address,
+        amount_a: u64,
+        amount_b: u64,
+        min_shares: u64,
+    ) -> Result<u64, ContractError> {
+        require_initialized(&env)?;
+        amm::add_liquidity(&env, pool_id, &provider, amount_a, amount_b, min_shares)
+    }
+
+    /// Remove liquidity from a pool.
+    /// `min_a` / `min_b` enforce slippage protection on the returned amounts.
+    /// Returns `(amount_a, amount_b)` transferred back to the provider.
+    pub fn amm_remove_liquidity(
+        env: Env,
+        pool_id: u64,
+        provider: Address,
+        shares: u64,
+        min_a: u64,
+        min_b: u64,
+    ) -> Result<(u64, u64), ContractError> {
+        require_initialized(&env)?;
+        amm::remove_liquidity(&env, pool_id, &provider, shares, min_a, min_b)
+    }
+
+    /// Swap `amount_in` of `token_in` for the other token in the pool.
+    /// `min_out` enforces slippage protection — reverts if output < min_out.
+    pub fn amm_swap(
+        env: Env,
+        pool_id: u64,
+        caller: Address,
+        token_in: Address,
+        amount_in: u64,
+        min_out: u64,
+    ) -> Result<amm::SwapResult, ContractError> {
+        require_initialized(&env)?;
+        amm::swap(&env, pool_id, &caller, &token_in, amount_in, min_out)
+    }
+
+    /// Simulate a swap without executing it. Returns expected output and price impact.
+    pub fn amm_quote_swap(
+        env: Env,
+        pool_id: u64,
+        token_in: Address,
+        amount_in: u64,
+    ) -> Result<amm::SwapResult, ContractError> {
+        amm::quote_swap(&env, pool_id, &token_in, amount_in)
+    }
+
+    /// Get the current spot price of token_a in terms of token_b (scaled by 1e7).
+    pub fn amm_spot_price(env: Env, pool_id: u64) -> Result<u64, ContractError> {
+        amm::spot_price(&env, pool_id)
+    }
+
+    /// Claim accumulated swap-fee yield for a liquidity provider.
+    /// Returns `(claimed_a, claimed_b)`.
+    pub fn amm_claim_yield(
+        env: Env,
+        pool_id: u64,
+        provider: Address,
+    ) -> Result<(u64, u64), ContractError> {
+        require_initialized(&env)?;
+        amm::claim_yield(&env, pool_id, &provider)
+    }
+
+    /// Get pool state.
+    pub fn amm_get_pool(env: Env, pool_id: u64) -> Result<amm::Pool, ContractError> {
+        amm::get_pool(&env, pool_id)
+    }
+
+    /// Get LP position for a provider in a pool.
+    pub fn amm_get_lp_position(env: Env, pool_id: u64, provider: Address) -> amm::LpPosition {
+        amm::get_lp_position(&env, pool_id, &provider)
     }
 }
 

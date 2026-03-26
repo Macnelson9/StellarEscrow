@@ -1,6 +1,8 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Ledger, Address, Env};
+extern crate std;
+
+use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
 
 use crate::{
     HistoryFilter, SortCriterion, SortOrder, StellarEscrowContract,
@@ -10,17 +12,13 @@ use crate::{
 fn setup() -> (Env, StellarEscrowContractClient<'static>, Address, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-
     let contract_id = env.register_contract(None, StellarEscrowContract);
     let client = StellarEscrowContractClient::new(&env, &contract_id);
-
     let admin = Address::generate(&env);
     let seller = Address::generate(&env);
     let buyer = Address::generate(&env);
     let token = Address::generate(&env);
-
     client.initialize(&admin, &token, &100); // 1% fee
-
     (env, client, admin, seller, buyer)
 }
 
@@ -126,8 +124,32 @@ fn test_history_pagination() {
     assert_eq!(page2.records.len(), 2);
 }
 
+// ---------------------------------------------------------------------------
+// Trade creation form tests
+// ---------------------------------------------------------------------------
+
 #[test]
-fn test_export_csv_returns_header_and_rows() {
+fn test_form_validate_valid_input() {
+    let (_env, client, _, seller, buyer) = setup();
+    client.validate_trade_form(&make_form_input(&seller, &buyer, 1_000_000, None));
+}
+
+#[test]
+fn test_form_validate_zero_amount() {
+    let (_env, client, _, seller, buyer) = setup();
+    let result = client.try_validate_trade_form(&make_form_input(&seller, &buyer, 0, None));
+    assert_eq!(result, Err(Ok(ContractError::InvalidAmount)));
+}
+
+#[test]
+fn test_form_validate_buyer_seller_same() {
+    let (_env, client, _, seller, _) = setup();
+    let result = client.try_validate_trade_form(&make_form_input(&seller, &seller, 1_000_000, None));
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn test_form_validate_unregistered_arbitrator() {
     let (env, client, _, seller, buyer) = setup();
     client.create_trade(&seller, &buyer, &1000, &None, &None);
     let csv = client.export_transaction_csv(&seller, &HistoryFilter { status: None, from_ledger: None, to_ledger: None });

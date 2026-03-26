@@ -14,9 +14,12 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub stellar: StellarConfig,
     pub rate_limit: RateLimitConfig,
+    pub auth: AuthConfig,
     pub storage: StorageConfig,
     #[serde(default)]
     pub notification: NotificationConfig,
+    #[serde(default)]
+    pub gateway: GatewayConfig,
 }
 
 /// Metadata section — version tracking for the config itself.
@@ -134,6 +137,22 @@ impl std::error::Error for ConfigValidationError {}
 // ---------------------------------------------------------------------------
 // Loading & validation
 // ---------------------------------------------------------------------------
+
+/// Gateway configuration for API routing and load balancing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayConfig {
+    /// Service instances for load balancing (host:port format)
+    #[serde(default)]
+    pub service_instances: Vec<String>,
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            service_instances: vec![],
+        }
+    }
+}
 
 impl Config {
     /// Load config from a TOML file, then apply environment variable overrides.
@@ -278,6 +297,19 @@ impl Default for Config {
                 max_file_size_mb: 10,
             },
             notification: NotificationConfig::default(),
+            notification: NotificationConfig {
+                email_api_url: "https://api.sendgrid.com".to_string(),
+                email_api_key: String::new(),
+                email_from: "noreply@stellarescrow.io".to_string(),
+                sms_api_url: "https://api.twilio.com".to_string(),
+                sms_account_sid: String::new(),
+                sms_auth_token: String::new(),
+                sms_from: String::new(),
+                push_api_url: "https://fcm.googleapis.com".to_string(),
+                push_project_id: String::new(),
+                push_server_key: String::new(),
+            },
+            gateway: GatewayConfig::default(),
         }
     }
 }

@@ -3,6 +3,7 @@
  * WCAG 2.1 AA Compliance Implementation
  */
 
+import { registerServiceWorker, initOfflineIndicator, promptInstall, isInstallable, subscribePush } from './pwa.js';
 import { setLocale, getLocale, formatCurrency, formatDate } from './i18n.js';
 import { registerServiceWorker, initOfflineIndicator, promptInstall, isInstallable, subscribePush } from './pwa.js';
 import { observeWebVitals, initLazyRoutes, prefetchOnIdle, cachedFetch, invalidateCache } from './performance.js';

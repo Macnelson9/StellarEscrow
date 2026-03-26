@@ -267,8 +267,13 @@ pub fn has_user(env: &Env, address: &Address) -> bool {
 // =============================================================================
 
 pub fn save_preference(env: &Env, address: &Address, pref: &UserPreference) {
-    let key = (USER_PREF_PREFIX, address, &pref.key);
-    env.storage().persistent().set(&key, pref);
+    // Store each preference as a separate entry keyed by (prefix, address, key_bytes)
+    // Use a soroban Map stored under (prefix, address) to avoid 3-tuple key issues
+    let map_key = (USER_PREF_PREFIX, address);
+    let mut map: soroban_sdk::Map<soroban_sdk::String, soroban_sdk::String> =
+        env.storage().persistent().get(&map_key).unwrap_or(soroban_sdk::Map::new(env));
+    map.set(pref.key.clone(), pref.value.clone());
+    env.storage().persistent().set(&map_key, &map);
 }
 
 pub fn get_preference(

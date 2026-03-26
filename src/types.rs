@@ -24,6 +24,42 @@ pub enum SortOrder {
     Descending,
 }
 
+/// Maximum byte length for a single metadata value string
+pub const METADATA_MAX_VALUE_LEN: u32 = 256;
+/// Maximum number of key-value pairs in metadata
+pub const METADATA_MAX_ENTRIES: u32 = 10;
+
+/// A single metadata key-value entry
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MetadataEntry {
+    pub key: String,
+    pub value: String,
+}
+
+/// Structured metadata attached to a trade (e.g. product description, shipping info)
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TradeMetadata {
+    pub entries: Vec<MetadataEntry>,
+}
+
+/// Optional wrapper for TradeMetadata (Soroban SDK requires enum wrappers for Option<contracttype>)
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OptionalTradeMetadata {
+    None,
+    Some(TradeMetadata),
+}
+
+/// Optional wrapper for TradeStatus
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OptionalTradeStatus {
+    None,
+    Some(TradeStatus),
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Trade {
