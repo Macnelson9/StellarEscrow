@@ -2,11 +2,14 @@
   "name": "stellar-escrow",
   "private": true,
   "scripts": {
+    "dev": "npm run dev --workspace=app",
+    "build": "npm run build --workspace=app",
     "test": "npm run test --workspaces --if-present",
     "test:coverage": "npm run test:coverage --workspaces --if-present",
     "test:e2e": "npm run test:e2e --workspace=components"
   },
   "workspaces": [
+    "app",
     "components",
     "api",
     "state",
