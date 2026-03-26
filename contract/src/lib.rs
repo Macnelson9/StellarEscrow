@@ -13,6 +13,7 @@ mod subscription;
 mod templates;
 mod tiers;
 mod types;
+mod upgrade;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env};
 #[cfg(test)]
@@ -30,6 +31,7 @@ pub use types::{
 };
 pub use queries::{PageParams, SortDirection, TradeFilter, TradeSortField, TradeStats};
 pub use oracle::{OracleEntry, PriceData, PriceValidation};
+pub use upgrade::{RollbackSnapshot, UpgradeProposal};
 
 use storage::{
     get_accumulated_fees, get_admin, get_fee_bps, get_trade, get_usdc_token,
@@ -1144,39 +1146,62 @@ impl StellarEscrowContract {
     // Upgrade Mechanism
     // -------------------------------------------------------------------------
 
-    /// Upgrade the contract WASM (admin only).
-    /// After calling this, invoke `migrate()` if state changes are needed.
+    /// Step 1: Admin proposes a WASM upgrade with a 24-hour timelock.
+    /// Replaces any existing pending proposal. Emits `EvUpgradeProposed`.
+    pub fn propose_upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+        description: soroban_sdk::String,
+    ) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        upgrade::propose_upgrade(&env, &admin, new_wasm_hash, description)
+    }
+
+    /// Cancel a pending upgrade proposal before it is executed.
+    pub fn cancel_upgrade(env: Env, admin: Address) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        upgrade::cancel_upgrade(&env, &admin)
+    }
+
+    /// Step 2: Execute the upgrade after the timelock has passed.
+    /// Snapshots state for rollback, swaps WASM, sets upgrade guard.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ContractError> {
         require_initialized(&env)?;
         let admin = get_admin(&env)?;
         admin.require_auth();
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
-        events::emit_upgraded(&env, get_version(&env));
-        Ok(())
+        upgrade::execute_upgrade(&env, &admin)
     }
 
-    /// Run post-upgrade state migration.
-    /// `expected_version` must match the current stored version to prevent
-    /// accidental double-application. Sets version to `expected_version + 1`.
+    /// Step 3: Run post-upgrade state migrations and finalise the upgrade.
+    /// `expected_version` must match the current stored version.
     pub fn migrate(env: Env, expected_version: u32) -> Result<(), ContractError> {
         require_initialized(&env)?;
         let admin = get_admin(&env)?;
         admin.require_auth();
-        let current = get_version(&env);
-        if current != expected_version {
-            return Err(ContractError::MigrationVersionMismatch);
-        }
-        // --- place version-specific migration logic here ---
-        // e.g. if expected_version == 1 { backfill_new_field(&env); }
-        let next = current.checked_add(1).ok_or(ContractError::Overflow)?;
-        set_version(&env, next);
-        events::emit_migrated(&env, current, next);
-        Ok(())
+        upgrade::run_migration(&env, &admin, expected_version)
+    }
+
+    /// Rollback the upgrade within the 1-hour rollback window.
+    /// Restores version and fee bps from the pre-upgrade snapshot.
+    pub fn rollback_upgrade(env: Env, admin: Address) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        upgrade::rollback_upgrade(&env, &admin)
     }
 
     /// Returns the current contract version.
     pub fn version(env: Env) -> u32 {
         get_version(&env)
+    }
+
+    /// Returns the pending upgrade proposal, if any.
+    pub fn get_upgrade_proposal(env: Env) -> Option<upgrade::UpgradeProposal> {
+        upgrade::get_upgrade_proposal(&env)
+    }
+
+    /// Returns the rollback snapshot, if an upgrade is in progress.
+    pub fn get_rollback_snapshot(env: Env) -> Option<upgrade::RollbackSnapshot> {
+        upgrade::get_rollback_snapshot(&env)
     }
 
     // -------------------------------------------------------------------------
