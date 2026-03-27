@@ -1,15 +1,12 @@
-# Funding Interface ✅ COMPLETE (Issue #32)
+# StellarEscrow TODO - Issue #100: E2E Testing ✅ COMPLETE
 
-## Status: All acceptance criteria implemented
+## Progress Tracker
+- [x] Step 1-4: Files created ✅
+- [x] Step 5: Deps installed ✅
+- [x] Step 6: cargo test passed ✅
+- [x] Step 7: Branched to blackboxai/issue-100-e2e-testing ✅
+- [ ] Step 8: Commit & PR
+- [x] Plan approved ✅
 
-**Created:**
-- `client/` SvelteKit app with Tailwind
-- `/trades/[id]` detail page w/ timeline
-- Funding modal: preview amounts/fees/balance/allowance status
-- Approve USDC flow (if insufficient)
-- Confirm tx + success/failure states
-- Contract client wrapper (SorobanRpc ready)
+**Next: Commit/push/PR**
 
-**Demo:** `cd client && pnpm i && pnpm dev` → `/trades/1` → Fund Trade
-
-**Next:** Install deps & test locally.
