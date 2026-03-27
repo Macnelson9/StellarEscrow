@@ -111,7 +111,11 @@ resource "aws_cloudwatch_dashboard" "db" {
   dashboard_body = jsonencode({
     widgets = [
       {
-        type = "metric"; x = 0; y = 0; width = 12; height = 6
+        type   = "metric"
+        x      = 0
+        y      = 0
+        width  = 12
+        height = 6
         properties = {
           title   = "CPU Utilisation"
           region  = "us-east-1"
@@ -125,7 +129,11 @@ resource "aws_cloudwatch_dashboard" "db" {
         }
       },
       {
-        type = "metric"; x = 12; y = 0; width = 12; height = 6
+        type   = "metric"
+        x      = 12
+        y      = 0
+        width  = 12
+        height = 6
         properties = {
           title   = "Database Connections"
           region  = "us-east-1"
@@ -139,7 +147,11 @@ resource "aws_cloudwatch_dashboard" "db" {
         }
       },
       {
-        type = "metric"; x = 0; y = 6; width = 12; height = 6
+        type   = "metric"
+        x      = 0
+        y      = 6
+        width  = 12
+        height = 6
         properties = {
           title   = "Read / Write Latency"
           region  = "us-east-1"
@@ -151,7 +163,11 @@ resource "aws_cloudwatch_dashboard" "db" {
         }
       },
       {
-        type = "metric"; x = 12; y = 6; width = 12; height = 6
+        type   = "metric"
+        x      = 12
+        y      = 6
+        width  = 12
+        height = 6
         properties = {
           title   = "Free Storage Space"
           region  = "us-east-1"
@@ -164,7 +180,11 @@ resource "aws_cloudwatch_dashboard" "db" {
         }
       },
       {
-        type = "metric"; x = 0; y = 12; width = 12; height = 6
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 12
+        height = 6
         properties = {
           title   = "IOPS"
           region  = "us-east-1"
@@ -176,7 +196,11 @@ resource "aws_cloudwatch_dashboard" "db" {
         }
       },
       {
-        type = "metric"; x = 12; y = 12; width = 12; height = 6
+        type   = "metric"
+        x      = 12
+        y      = 12
+        width  = 12
+        height = 6
         properties = {
           title   = "Freeable Memory"
           region  = "us-east-1"
