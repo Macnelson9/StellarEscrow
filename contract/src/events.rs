@@ -143,11 +143,11 @@ pub fn emit_trade_created(env: &Env, trade_id: u64, seller: Address, buyer: Addr
 }
 
 pub fn emit_compliance_failed(env: &Env, user: Address, reason: &soroban_sdk::String) {
-    env.events().publish((symbol_short!("compl_fail"),), (user, reason.clone()));
+    env.events().publish((cat_sys(), symbol_short!("compl_fail")), EvComplianceFailed { v: EVENT_VERSION, user, reason: reason.clone() });
 }
 
 pub fn emit_compliance_passed(env: &Env, trade_id: u64, seller: Address, buyer: Address, amount: u64) {
-    env.events().publish((symbol_short!("compl_pass"),), (trade_id, seller, buyer, amount));
+    env.events().publish((cat_sys(), symbol_short!("compl_pass")), EvCompliancePassed { v: EVENT_VERSION, trade_id, seller, buyer, amount });
 }
 
 pub fn emit_trade_funded(env: &Env, trade_id: u64) {
@@ -329,6 +329,19 @@ pub fn emit_oracle_price_fetched(env: &Env, base: Address, quote: Address, price
 pub fn emit_oracle_unavailable(env: &Env, base: Address, quote: Address) {
     env.events().publish((cat_oracle(), symbol_short!("orc_err")), EvOracleUnavailable { v: EVENT_VERSION, base, quote });
 }
+
+// ---------------------------------------------------------------------------
+// Upgrade system events
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Compliance event payloads
+// ---------------------------------------------------------------------------
+
+#[contracttype] #[derive(Clone, Debug)]
+pub struct EvComplianceFailed  { pub v: u32, pub user: Address, pub reason: String }
+#[contracttype] #[derive(Clone, Debug)]
+pub struct EvCompliancePassed  { pub v: u32, pub trade_id: u64, pub seller: Address, pub buyer: Address, pub amount: u64 }
 
 // ---------------------------------------------------------------------------
 // Upgrade system events

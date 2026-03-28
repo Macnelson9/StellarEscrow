@@ -7,6 +7,10 @@ use uuid::Uuid;
 pub struct Event {
     pub id: Uuid,
     pub event_type: String,
+    /// High-level category (trade / arb / fee / tmpl / sub / gov / sys / ins / oracle)
+    pub category: String,
+    /// Schema version from the contract event payload (v field)
+    pub schema_version: i32,
     pub contract_id: String,
     pub ledger: i64,
     pub transaction_hash: String,
@@ -84,9 +88,17 @@ pub struct EventQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub event_type: Option<String>,
+    /// Filter by event category (e.g. "trade", "arb", "fee", "gov", "sys", "ins", "oracle")
+    pub category: Option<String>,
     pub trade_id: Option<u64>,
     pub from_ledger: Option<i64>,
     pub to_ledger: Option<i64>,
+    /// ISO-8601 lower bound on event timestamp
+    pub from_time: Option<chrono::DateTime<Utc>>,
+    /// ISO-8601 upper bound on event timestamp
+    pub to_time: Option<chrono::DateTime<Utc>>,
+    /// Filter by contract address
+    pub contract_id: Option<String>,
 }
 
 /// Paginated response wrapper for list endpoints.
@@ -99,6 +111,13 @@ pub struct PagedResponse<T: Serialize> {
     pub has_more: bool,
 }
 
+/// Result of a batch event insert operation.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchInsertResult {
+    pub inserted: usize,
+    pub skipped: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayRequest {
     pub from_ledger: i64,
@@ -108,6 +127,10 @@ pub struct ReplayRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSocketMessage {
     pub event_type: String,
+    /// Event category (e.g. "trade", "arb", "fee") — enables client-side filtering
+    pub category: String,
+    /// Schema version from the contract event payload
+    pub version: u32,
     pub data: serde_json::Value,
     pub timestamp: DateTime<Utc>,
 }
