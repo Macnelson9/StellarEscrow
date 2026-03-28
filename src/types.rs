@@ -53,6 +53,12 @@ pub struct Trade {
     pub created_at: u32,
     pub updated_at: u32,
     pub metadata: Option<TradeMetadata>,
+    /// Token used for this trade. Defaults to `Currency::Usdc` for backward compatibility.
+    pub currency: Currency,
+    /// Optional Unix timestamp (seconds, UTC) after which funds auto-release to seller
+    /// if the trade is Funded and no dispute has been raised.
+    /// Uses `env.ledger().timestamp()` for all comparisons (Stellar ledger time, always UTC).
+    pub expiry_time: Option<u64>,
 }
 
 #[contracttype]
@@ -67,6 +73,8 @@ pub struct TransactionRecord {
     pub created_at: u32,
     pub updated_at: u32,
     pub metadata: Option<TradeMetadata>,
+    pub currency: Currency,
+    pub expiry_time: Option<u64>,
 }
 
 pub const TIER_SILVER_THRESHOLD: u64 = 10_000_000_000;
@@ -262,7 +270,14 @@ pub struct TradeDetail {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Currency {
+    /// USD Coin (default — backward-compatible)
     Usdc,
+    /// Euro Coin
+    Eurc,
+    /// Native XLM (wrapped as SAC)
+    Xlm,
+    /// Any other SAC token identified by its contract address
+    Other(Address),
 }
 
 #[contracttype]
@@ -273,6 +288,8 @@ pub struct TradeFormInput {
     pub amount: u64,
     pub currency: Currency,
     pub arbitrator: Option<Address>,
+    /// Optional Unix timestamp (UTC seconds) after which funds auto-release to seller.
+    pub expiry_time: Option<u64>,
 }
 
 #[contracttype]
@@ -284,6 +301,7 @@ pub struct TradePreview {
     pub currency: Currency,
     pub arbitrator: Option<Address>,
     pub estimated_fee: u64,
+    pub expiry_time: Option<u64>,
 }
 
 #[contracttype]

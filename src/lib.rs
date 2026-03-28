@@ -48,10 +48,10 @@ pub use types::{
 };
 
 use storage::{
-    append_timeline_entry, get_accumulated_fees, get_admin, get_fee_bps, get_trade,
-    get_usdc_token, has_arbitrator, increment_trade_counter, index_trade_for_address,
-    is_initialized, is_paused, remove_arbitrator, save_arbitrator, save_trade,
-    set_accumulated_fees, set_admin, set_fee_bps, set_initialized, set_paused,
+    add_currency_fees, append_timeline_entry, get_accumulated_fees, get_admin, get_fee_bps,
+    get_currency_fees, get_trade, get_usdc_token, has_arbitrator, increment_trade_counter,
+    index_trade_for_address, is_initialized, is_paused, remove_arbitrator, save_arbitrator,
+    save_trade, set_accumulated_fees, set_admin, set_fee_bps, set_initialized, set_paused,
     set_trade_counter, set_usdc_token,
 };
 
@@ -83,6 +83,8 @@ pub(crate) fn lib_create_trade(
     seller: Address,
     buyer: Address,
     amount: u64,
+    currency: types::Currency,
+    expiry_time: Option<u64>,
     arbitrator: Option<Address>,
     metadata: Option<TradeMetadata>,
 ) -> Result<u64, ContractError> {
@@ -125,11 +127,17 @@ pub(crate) fn lib_create_trade(
         created_at: now,
         updated_at: now,
         metadata,
+        currency: currency.clone(),
+        expiry_time,
     };
     save_trade(env, trade_id, &trade);
     index_trade_for_address(env, &seller, trade_id);
     index_trade_for_address(env, &buyer, trade_id);
     append_timeline_entry(env, trade_id, TimelineEntry { status: TradeStatus::Created, ledger: now });
+    // Accumulate fees globally and per-currency
+    let current_fees = get_accumulated_fees(env)?;
+    set_accumulated_fees(env, current_fees.checked_add(fee).ok_or(ContractError::Overflow)?);
+    add_currency_fees(env, &currency, fee)?;
     users::record_trade_created(env, &seller, &buyer, amount);
     admin::on_trade_created(env, amount);
     events::emit_trade_created(env, trade_id, seller, buyer, amount);
@@ -225,6 +233,8 @@ impl StellarEscrowContract {
         seller: Address,
         buyer: Address,
         amount: u64,
+        currency: types::Currency,
+        expiry_time: Option<u64>,
         arbitrator: Option<Address>,
         metadata: Option<TradeMetadata>,
     ) -> Result<u64, ContractError> {
@@ -246,11 +256,17 @@ impl StellarEscrowContract {
             id: trade_id, seller: seller.clone(), buyer: buyer.clone(),
             amount, fee, arbitrator, status: TradeStatus::Created,
             created_at: now, updated_at: now, metadata,
+            currency: currency.clone(),
+            expiry_time,
         };
         save_trade(&env, trade_id, &trade);
         index_trade_for_address(&env, &seller, trade_id);
         index_trade_for_address(&env, &buyer, trade_id);
         append_timeline_entry(&env, trade_id, TimelineEntry { status: TradeStatus::Created, ledger: now });
+        // Accumulate fees globally and per-currency
+        let current_fees = get_accumulated_fees(&env)?;
+        set_accumulated_fees(&env, current_fees.checked_add(fee).ok_or(ContractError::Overflow)?);
+        add_currency_fees(&env, &currency, fee)?;
         users::record_trade_created(&env, &seller, &buyer, amount);
         admin::on_trade_created(&env, amount);
         events::emit_trade_created(&env, trade_id, seller.clone(), buyer, amount);
@@ -263,6 +279,12 @@ impl StellarEscrowContract {
         require_not_paused(&env)?;
         let mut trade = get_trade(&env, trade_id)?;
         if trade.status != TradeStatus::Created { return Err(ContractError::InvalidStatus); }
+        // Reject funding an already-expired trade
+        if let Some(expiry) = trade.expiry_time {
+            if env.ledger().timestamp() >= expiry {
+                return Err(ContractError::TradeExpired);
+            }
+        }
         trade.buyer.require_auth();
         let token = get_usdc_token(&env)?;
         let token_client = TokenClient::new(&env, &token);
@@ -280,12 +302,49 @@ impl StellarEscrowContract {
         require_not_paused(&env)?;
         let mut trade = get_trade(&env, trade_id)?;
         if trade.status != TradeStatus::Funded { return Err(ContractError::InvalidStatus); }
+        // Block manual completion if the trade has expired — use auto_release instead
+        if let Some(expiry) = trade.expiry_time {
+            if env.ledger().timestamp() >= expiry {
+                return Err(ContractError::TradeExpired);
+            }
+        }
         trade.seller.require_auth();
         trade.status = TradeStatus::Completed;
         trade.updated_at = env.ledger().sequence();
         save_trade(&env, trade_id, &trade);
         append_timeline_entry(&env, trade_id, TimelineEntry { status: TradeStatus::Completed, ledger: trade.updated_at });
         events::emit_trade_completed(&env, trade_id);
+        Ok(())
+    }
+
+    /// Automatically release funds to the seller when `expiry_time` has passed
+    /// and the trade is still Funded with no active dispute.
+    /// Anyone may call this — no auth required (permissionless trigger).
+    pub fn auto_release(env: Env, trade_id: u64) -> Result<(), ContractError> {
+        if !is_initialized(&env) { return Err(ContractError::NotInitialized); }
+        require_not_paused(&env)?;
+        let mut trade = get_trade(&env, trade_id)?;
+        if trade.status != TradeStatus::Funded { return Err(ContractError::InvalidStatus); }
+        let expiry = trade.expiry_time.ok_or(ContractError::NotExpiredYet)?;
+        let now_ts = env.ledger().timestamp(); // UTC Unix seconds — no timezone conversion needed
+        if now_ts < expiry {
+            return Err(ContractError::NotExpiredYet);
+        }
+        let payout = trade.amount.checked_sub(trade.fee).ok_or(ContractError::Overflow)?;
+        let token = get_usdc_token(&env)?;
+        let token_client = TokenClient::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &trade.seller, &(payout as i128));
+        let current_fees = get_accumulated_fees(&env)?;
+        set_accumulated_fees(&env, current_fees.checked_add(trade.fee).ok_or(ContractError::Overflow)?);
+        tiers::record_volume(&env, &trade.seller, trade.amount)?;
+        tiers::record_volume(&env, &trade.buyer, trade.amount)?;
+        users::record_trade_completed(&env, &trade.seller, &trade.buyer);
+        admin::on_trade_completed(&env, trade.fee);
+        trade.status = TradeStatus::Completed;
+        trade.updated_at = env.ledger().sequence();
+        save_trade(&env, trade_id, &trade);
+        append_timeline_entry(&env, trade_id, TimelineEntry { status: TradeStatus::Completed, ledger: trade.updated_at });
+        events::emit_trade_auto_released(&env, trade_id, payout, now_ts);
         Ok(())
     }
 
@@ -316,6 +375,12 @@ impl StellarEscrowContract {
         let mut trade = get_trade(&env, trade_id)?;
         if trade.status != TradeStatus::Funded && trade.status != TradeStatus::Completed {
             return Err(ContractError::InvalidStatus);
+        }
+        // Cannot raise a dispute after expiry — auto_release should be called instead
+        if let Some(expiry) = trade.expiry_time {
+            if env.ledger().timestamp() >= expiry {
+                return Err(ContractError::TradeExpired);
+            }
         }
         if trade.arbitrator.is_none() { return Err(ContractError::ArbitratorNotRegistered); }
         if caller != trade.buyer && caller != trade.seller { return Err(ContractError::Unauthorized); }
@@ -379,6 +444,12 @@ impl StellarEscrowContract {
 
     pub fn get_accumulated_fees(env: Env) -> Result<u64, ContractError> {
         get_accumulated_fees(&env)
+    }
+
+    /// Query accumulated fees for a specific currency.
+    /// Returns 0 if no fees have been collected for that currency yet.
+    pub fn get_currency_fees(env: Env, currency: types::Currency) -> u64 {
+        get_currency_fees(&env, &currency)
     }
 
     pub fn is_arbitrator_registered(env: Env, arbitrator: Address) -> bool {
@@ -481,6 +552,7 @@ impl StellarEscrowContract {
                 id: trade_id, seller: seller.clone(), buyer: buyer.clone(),
                 amount, fee, arbitrator, status: TradeStatus::Created,
                 created_at: now, updated_at: now, metadata: None,
+                currency: types::Currency::Usdc, expiry_time: None,
             };
             save_trade(&env, trade_id, &trade);
             index_trade_for_address(&env, &seller, trade_id);
@@ -645,6 +717,7 @@ impl StellarEscrowContract {
             amount, fee, arbitrator: terms.default_arbitrator,
             status: TradeStatus::Created, created_at: now, updated_at: now,
             metadata: terms.default_metadata,
+            currency: types::Currency::Usdc, expiry_time: None,
         };
         save_trade(&env, trade_id, &trade);
         index_trade_for_address(&env, &seller, trade_id);

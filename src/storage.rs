@@ -40,6 +40,7 @@ const TIMELINE_PREFIX: &str = "TLINE";
 const PRESET_PREFIX: &str = "PST";
 const USER_PRESETS_PREFIX: &str = "UPST";
 const ONBOARDING_PREFIX: &str = "ONBOARD";
+const CURRENCY_FEES_PREFIX: &str = "CFEES";
 
 // =============================================================================
 // Initialization
@@ -122,6 +123,23 @@ pub fn set_accumulated_fees(env: &Env, fees: u64) {
 
 pub fn get_accumulated_fees(env: &Env) -> Result<u64, ContractError> {
     env.storage().instance().get(&ACCUMULATED_FEES).ok_or(ContractError::NotInitialized)
+}
+
+// =============================================================================
+// Per-currency accumulated fees
+// =============================================================================
+
+pub fn get_currency_fees(env: &Env, currency: &crate::types::Currency) -> u64 {
+    let key = (CURRENCY_FEES_PREFIX, currency);
+    env.storage().persistent().get(&key).unwrap_or(0)
+}
+
+pub fn add_currency_fees(env: &Env, currency: &crate::types::Currency, delta: u64) -> Result<(), ContractError> {
+    let key = (CURRENCY_FEES_PREFIX, currency);
+    let current: u64 = env.storage().persistent().get(&key).unwrap_or(0);
+    let updated = current.checked_add(delta).ok_or(ContractError::Overflow)?;
+    env.storage().persistent().set(&key, &updated);
+    Ok(())
 }
 
 // =============================================================================

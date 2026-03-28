@@ -31,4 +31,6 @@ pub enum ContractError {
     PresetNameTooLong = 25,
     TooManyPresets = 26,
     InsufficientAllowance = 27,
+    TradeExpired = 28,
+    NotExpiredYet = 29,
 }

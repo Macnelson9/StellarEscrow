@@ -112,12 +112,10 @@ fn to_record(trade: &Trade) -> TransactionRecord {
         created_at: trade.created_at,
         updated_at: trade.updated_at,
         metadata: trade.metadata.clone(),
+        currency: trade.currency.clone(),
+        expiry_time: trade.expiry_time,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Public search functions
-// ---------------------------------------------------------------------------
 
 /// Search all trades on the platform using multi-criteria filtering.
 ///

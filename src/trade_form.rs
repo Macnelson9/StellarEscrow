@@ -70,6 +70,7 @@ pub fn build_preview(env: &Env, input: &TradeFormInput) -> Result<TradePreview, 
         currency: input.currency.clone(),
         arbitrator: input.arbitrator.clone(),
         estimated_fee,
+        expiry_time: input.expiry_time,
     })
 }
 
@@ -99,6 +100,8 @@ pub fn confirm_trade(
         input.seller.clone(),
         input.buyer.clone(),
         input.amount,
+        input.currency.clone(),
+        input.expiry_time,
         input.arbitrator.clone(),
         None,
     )
@@ -114,4 +117,5 @@ fn preview_matches(input: &TradeFormInput, preview: &TradePreview) -> bool {
         && input.amount == preview.amount
         && input.currency == preview.currency
         && input.arbitrator == preview.arbitrator
+        && input.expiry_time == preview.expiry_time
 }

@@ -30,6 +30,12 @@ pub fn emit_trade_cancelled(env: &Env, trade_id: u64) {
     env.events().publish((symbol_short!("cancel"),), trade_id);
 }
 
+/// Emitted when a funded trade's expiry_time has passed and funds are
+/// automatically released to the seller without an explicit confirmation.
+pub fn emit_trade_auto_released(env: &Env, trade_id: u64, payout: u64, timestamp: u64) {
+    env.events().publish((symbol_short!("auto_rel"),), (trade_id, payout, timestamp));
+}
+
 pub fn emit_arbitrator_registered(env: &Env, arbitrator: Address) {
     env.events().publish((symbol_short!("arb_reg"),), arbitrator);
 }
