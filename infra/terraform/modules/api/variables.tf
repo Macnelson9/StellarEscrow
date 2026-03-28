@@ -1,6 +1,7 @@
 variable "name_prefix"            { type = string }
 variable "environment"            { type = string }
 variable "vpc_id"                 { type = string }
+variable "public_subnet_ids"      { type = list(string) }
 variable "private_subnet_ids"     { type = list(string) }
 variable "api_image"              { type = string }
 variable "desired_count" {
@@ -29,3 +30,7 @@ variable "stellar_contract_id"    { type = string }
 variable "stellar_horizon_url"    { type = string }
 variable "ecs_security_group_id"  { type = string }
 variable "api_target_group_arn"   { type = string }
+variable "enable_deletion_protection" {
+  type    = bool
+  default = false
+}

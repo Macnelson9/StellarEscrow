@@ -24,96 +24,6 @@ resource "aws_ecr_lifecycle_policy" "api" {
   })
 }
 
-# Security group for the ALB
-resource "aws_security_group" "alb" {
-  name        = "${var.name_prefix}-alb-sg"
-  description = "Allow HTTP/HTTPS from internet"
-  vpc_id      = var.vpc_id
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.name_prefix}-alb-sg" }
-}
-
-# Security group for ECS tasks
-resource "aws_security_group" "api" {
-  name        = "${var.name_prefix}-api-sg"
-  description = "Allow traffic from ALB to API tasks"
-  vpc_id      = var.vpc_id
-
-  ingress {
-    from_port       = var.container_port
-    to_port         = var.container_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.name_prefix}-api-sg" }
-}
-
-# Application Load Balancer
-resource "aws_lb" "api" {
-  name               = "${var.name_prefix}-alb"
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb.id]
-  subnets            = var.public_subnet_ids
-
-  enable_deletion_protection = var.enable_deletion_protection
-
-  tags = { Name = "${var.name_prefix}-alb" }
-}
-
-resource "aws_lb_target_group" "api" {
-  name        = "${var.name_prefix}-api-tg"
-  port        = var.container_port
-  protocol    = "HTTP"
-  vpc_id      = var.vpc_id
-  target_type = "ip"
-
-  health_check {
-    path                = "/health"
-    healthy_threshold   = 2
-    unhealthy_threshold = 3
-    interval            = 30
-    timeout             = 5
-  }
-}
-
-resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.api.arn
-  port              = 80
-  protocol          = "HTTP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.api.arn
-  }
-}
-
 # ECS Cluster
 resource "aws_ecs_cluster" "main" {
   name = "${var.name_prefix}-cluster"
@@ -183,11 +93,11 @@ resource "aws_ecs_task_definition" "api" {
     }]
 
     environment = [
-      { name = "NODE_ENV",                                value = var.environment },
-      { name = "PORT",                                    value = tostring(var.container_port) },
-      { name = "STELLAR_ESCROW__STELLAR__NETWORK",        value = var.stellar_network },
-      { name = "STELLAR_ESCROW__STELLAR__CONTRACT_ID",    value = var.stellar_contract_id },
-      { name = "STELLAR_ESCROW__STELLAR__HORIZON_URL",    value = var.stellar_horizon_url },
+      { name = "NODE_ENV",                             value = var.environment },
+      { name = "PORT",                                 value = tostring(var.container_port) },
+      { name = "STELLAR_ESCROW__STELLAR__NETWORK",     value = var.stellar_network },
+      { name = "STELLAR_ESCROW__STELLAR__CONTRACT_ID", value = var.stellar_contract_id },
+      { name = "STELLAR_ESCROW__STELLAR__HORIZON_URL", value = var.stellar_horizon_url },
     ]
 
     secrets = [
@@ -236,9 +146,7 @@ resource "aws_ecs_service" "api" {
   deployment_minimum_healthy_percent = 50
   deployment_maximum_percent         = 200
 
-  # Allow autoscaling to manage desired_count without Terraform drift
   lifecycle {
     ignore_changes = [desired_count]
   }
-  depends_on = [aws_lb_listener.http]
 }
