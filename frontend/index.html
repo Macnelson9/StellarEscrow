@@ -81,6 +81,7 @@
                     <li role="none"><a href="#trade-dashboard" role="menuitem" class="nav-link" data-i18n="nav.tradeDashboard">My Trades</a></li>
                     <li role="none"><a href="#events" role="menuitem" class="nav-link" data-i18n="nav.events">View Events</a></li>
                     <li role="none"><a href="#search" role="menuitem" class="nav-link" data-i18n="nav.search">Search</a></li>
+                    <li role="none"><a href="#create-trade" role="menuitem" class="nav-link" data-i18n="nav.createTrade">Create Trade</a></li>
                     <li role="none"><a href="#history" role="menuitem" class="nav-link" data-i18n="nav.history">History</a></li>
                     <li role="none"><a href="#disputes" role="menuitem" class="nav-link" data-i18n="nav.disputes">Disputes</a></li>
                     <li role="none"><a href="#arbitrator" role="menuitem" class="nav-link" data-i18n="nav.arbitrator">Arbitrator</a></li>
@@ -1111,6 +1112,16 @@
                 </div>
             </div>
         </section>
+        <!-- Create Trade Section -->
+        <section id="create-trade" aria-labelledby="tc-heading" class="section">
+            <div class="container">
+                <h2 id="tc-heading" class="section-title">Create Trade</h2>
+                <div class="td-panel tc-panel-wrap">
+                    <div id="tc-panel" role="region" aria-live="polite" aria-label="Trade creation form"></div>
+                </div>
+            </div>
+        </section>
+
         <!-- Transaction History Section -->
         <section id="history" aria-labelledby="hx-heading" class="section">
             <div class="container">
@@ -1237,5 +1248,6 @@
     <script type="module" src="app.js"></script>
     <script src="dashboard.js"></script>
     <script src="history.js"></script>
+    <script src="trade-create.js"></script>
 </body>
 </html>
