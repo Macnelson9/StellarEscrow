@@ -2,8 +2,11 @@ use soroban_sdk::{Address, Env};
 
 use crate::errors::ContractError;
 use crate::events;
-use crate::storage::{get_tier_config, get_user_tier, save_user_tier};
-use crate::types::{TierConfig, UserTier, UserTierInfo, TIER_GOLD_THRESHOLD, TIER_SILVER_THRESHOLD};
+use crate::storage::{get_fee_bps, get_tier_config, get_user_tier, save_user_tier};
+use crate::types::{
+    TierConfig, TierStatus, TierThresholds, UserTier, UserTierInfo,
+    TIER_GOLD_THRESHOLD, TIER_SILVER_THRESHOLD,
+};
 
 pub fn effective_fee_bps(env: &Env, user: &Address, base_fee_bps: u32) -> u32 {
     let info = match get_user_tier(env, user) {
@@ -111,4 +114,43 @@ pub fn remove_custom_fee(env: &Env, user: &Address) {
     info.custom_fee_bps = None;
     info.tier = volume_tier(info.total_volume);
     save_user_tier(env, user, &info);
+}
+
+/// Returns the configured volume thresholds for Silver and Gold tiers.
+pub fn get_tier_thresholds() -> TierThresholds {
+    TierThresholds {
+        silver_threshold: TIER_SILVER_THRESHOLD,
+        gold_threshold: TIER_GOLD_THRESHOLD,
+    }
+}
+
+/// Returns how much additional trading volume is needed to reach the next tier.
+/// Returns 0 if the user is already at Gold tier or has a Custom fee.
+pub fn volume_to_next_tier(info: &UserTierInfo) -> u64 {
+    match info.tier {
+        UserTier::Bronze => TIER_SILVER_THRESHOLD.saturating_sub(info.total_volume),
+        UserTier::Silver => TIER_GOLD_THRESHOLD.saturating_sub(info.total_volume),
+        UserTier::Gold | UserTier::Custom => 0,
+    }
+}
+
+/// Returns a full tier status snapshot for a user, including their current tier,
+/// cumulative volume, volume needed for the next upgrade, and effective fee bps.
+pub fn get_tier_status(env: &Env, user: &Address) -> Result<TierStatus, ContractError> {
+    let base_fee_bps = get_fee_bps(env)?;
+    let info = get_user_tier(env, user).unwrap_or(UserTierInfo {
+        tier: UserTier::Bronze,
+        total_volume: 0,
+        custom_fee_bps: None,
+    });
+    let to_next = volume_to_next_tier(&info);
+    let fee_bps = effective_fee_bps(env, user, base_fee_bps);
+    let has_custom = info.custom_fee_bps.is_some();
+    Ok(TierStatus {
+        current_tier: info.tier,
+        total_volume: info.total_volume,
+        volume_to_next_tier: to_next,
+        effective_fee_bps: fee_bps,
+        has_custom_fee: has_custom,
+    })
 }

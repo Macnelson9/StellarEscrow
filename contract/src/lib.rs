@@ -24,14 +24,10 @@ use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, BytesN, E
 
 pub use errors::ContractError;
 pub use types::{
-    ArbitrationConfig, DisclosureGrant, DisputeResolution, Proposal, ProposalAction,
-    ArbitrationConfig, ArbitratorVote, DisclosureGrant, DisputeResolution, MultiSigConfig,
-    Proposal, ProposalAction, ProposalStatus, Subscription, SubscriptionTier, TierConfig,
-    TemplateTerms, TemplateVersion, Trade, TradePrivacy, TradeStatus, TradeTemplate,
-    UserTier, UserTierInfo, VotingSummary,
-    ArbitratorReputation, DisclosureGrant, DisputeResolution, Proposal, ProposalAction,
-    ProposalStatus, Subscription, SubscriptionTier, TierConfig, TemplateTerms, TemplateVersion,
-    Trade, TradePrivacy, TradeStatus, TradeTemplate, UserTier, UserTierInfo,
+    ArbitrationConfig, ArbitratorReputation, ArbitratorVote, DisclosureGrant, DisputeResolution,
+    InsurancePolicy, MultiSigConfig, Proposal, ProposalAction, ProposalStatus, Subscription,
+    SubscriptionTier, TierConfig, TierStatus, TierThresholds, TemplateTerms, TemplateVersion,
+    Trade, TradePrivacy, TradeStatus, TradeTemplate, UserTier, UserTierInfo, VotingSummary,
 };
 pub use queries::{PageParams, SortDirection, TradeFilter, TradeSortField, TradeStats};
 pub use oracle::{OracleEntry, PriceData, PriceValidation};
@@ -1216,6 +1212,29 @@ impl StellarEscrowContract {
     pub fn get_effective_fee_bps(env: Env, user: Address) -> Result<u32, ContractError> {
         let base = get_fee_bps(&env)?;
         Ok(tiers::effective_fee_bps(&env, &user, base))
+    }
+
+    /// Query the volume thresholds required to reach Silver and Gold tiers.
+    pub fn get_tier_thresholds(_env: Env) -> TierThresholds {
+        tiers::get_tier_thresholds()
+    }
+
+    /// Query additional trading volume a user needs to reach the next tier.
+    /// Returns 0 if the user is already at Gold or has a custom fee.
+    pub fn get_volume_to_next_tier(env: Env, user: Address) -> u64 {
+        let info = storage::get_user_tier(&env, &user).unwrap_or(UserTierInfo {
+            tier: UserTier::Bronze,
+            total_volume: 0,
+            custom_fee_bps: None,
+        });
+        tiers::volume_to_next_tier(&info)
+    }
+
+    /// Query a complete tier status snapshot for a user: current tier, cumulative
+    /// volume, volume needed to reach the next tier, and effective fee bps.
+    pub fn get_user_tier_status(env: Env, user: Address) -> Result<TierStatus, ContractError> {
+        require_initialized(&env)?;
+        tiers::get_tier_status(&env, &user)
     }
 
     // -------------------------------------------------------------------------

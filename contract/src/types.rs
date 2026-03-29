@@ -37,6 +37,32 @@ pub struct TierConfig {
     pub gold_fee_bps: u32,
 }
 
+/// Volume thresholds required to reach each tier.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TierThresholds {
+    /// Minimum cumulative trade volume (in token units) to reach Silver tier
+    pub silver_threshold: u64,
+    /// Minimum cumulative trade volume (in token units) to reach Gold tier
+    pub gold_threshold: u64,
+}
+
+/// A snapshot of a user's current tier standing, including progress toward the next tier.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TierStatus {
+    /// The user's current tier
+    pub current_tier: UserTier,
+    /// Total cumulative trading volume recorded for this user
+    pub total_volume: u64,
+    /// Additional volume needed to reach the next tier (0 if already at Gold or Custom)
+    pub volume_to_next_tier: u64,
+    /// The effective fee in basis points for the user's next trade
+    pub effective_fee_bps: u32,
+    /// Whether the user has a custom fee rate assigned
+    pub has_custom_fee: bool,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TradeStatus {
