@@ -2,6 +2,7 @@ import { Routes, Route, NavLink } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import TradeDetail from './pages/TradeDetail';
 import CreateTrade from './pages/CreateTrade';
+import Help from './pages/Help';
 import { ErrorBoundary } from './ErrorBoundary';
 import './App.css';
 
@@ -13,6 +14,7 @@ export default function App() {
           <span className="nav-brand">StellarEscrow</span>
           <NavLink to="/" end>Dashboard</NavLink>
           <NavLink to="/trades/new">New Trade</NavLink>
+          <NavLink to="/help">Help</NavLink>
         </nav>
         <main className="main">
           <ErrorBoundary>
@@ -20,6 +22,7 @@ export default function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/trades/new" element={<CreateTrade />} />
               <Route path="/trades/:id" element={<TradeDetail />} />
+              <Route path="/help" element={<Help />} />
             </Routes>
           </ErrorBoundary>
         </main>
