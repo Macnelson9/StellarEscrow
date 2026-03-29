@@ -225,4 +225,6 @@ pub enum ContractError {
     // Social feature errors (70-74)
     CannotFollowSelf = 70,
     NotFollowing = 71,
+    NoTrigger = 113,
+    PriceConditionNotMet = 114,
 }

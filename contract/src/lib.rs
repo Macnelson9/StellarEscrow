@@ -24,14 +24,10 @@ use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, BytesN, E
 
 pub use errors::ContractError;
 pub use types::{
-    ArbitrationConfig, DisclosureGrant, DisputeResolution, Proposal, ProposalAction,
-    ArbitrationConfig, ArbitratorVote, DisclosureGrant, DisputeResolution, MultiSigConfig,
-    Proposal, ProposalAction, ProposalStatus, Subscription, SubscriptionTier, TierConfig,
-    TemplateTerms, TemplateVersion, Trade, TradePrivacy, TradeStatus, TradeTemplate,
-    UserTier, UserTierInfo, VotingSummary,
-    ArbitratorReputation, DisclosureGrant, DisputeResolution, Proposal, ProposalAction,
-    ProposalStatus, Subscription, SubscriptionTier, TierConfig, TemplateTerms, TemplateVersion,
-    Trade, TradePrivacy, TradeStatus, TradeTemplate, UserTier, UserTierInfo,
+    ArbitrationConfig, ArbitratorReputation, ArbitratorVote, DisclosureGrant, DisputeResolution,
+    MultiSigConfig, PriceTrigger, Proposal, ProposalAction, ProposalStatus, Subscription,
+    SubscriptionTier, TemplateTerms, TemplateVersion, Trade, TradePrivacy, TradeStatus,
+    TradeTemplate, TriggerAction, UserTier, UserTierInfo, VotingSummary,
 };
 pub use queries::{PageParams, SortDirection, TradeFilter, TradeSortField, TradeStats};
 pub use oracle::{OracleEntry, PriceData, PriceValidation};
@@ -242,53 +238,6 @@ impl StellarEscrowContract {
     /// Create a trade with multi-signature arbitration.
     /// All arbitrators in `config` must be registered; threshold must be > 0
     /// and ≤ arbitrators count.
-    pub fn create_multisig_trade(
-        env: Env,
-        seller: Address,
-        buyer: Address,
-        amount: u64,
-        config: MultiSigConfig,
-        expiry_time: Option<u64>,
-        currency: Option<Address>,
-    ) -> Result<u64, ContractError> {
-        require_initialized(&env)?;
-        require_not_paused(&env)?;
-        if amount == 0 {
-            return Err(ContractError::InvalidAmount);
-        }
-        if config.threshold == 0 || config.threshold > config.arbitrators.len() {
-            return Err(ContractError::InvalidMultiSigConfig);
-        }
-        for i in 0..config.arbitrators.len() {
-            if !has_arbitrator(&env, &config.arbitrators.get(i).unwrap()) {
-                return Err(ContractError::ArbitratorNotRegistered);
-            }
-        }
-        if let Some(expiry) = expiry_time {
-            if expiry <= env.ledger().timestamp() {
-                return Err(ContractError::InvalidExpiry);
-            }
-        }
-        seller.require_auth();
-        let token = currency.unwrap_or(get_usdc_token(&env)?);
-        let trade_id = increment_trade_counter(&env)?;
-        let fee = calc_fee(&env, &seller, amount)?;
-        let trade = Trade {
-            id: trade_id,
-            seller: seller.clone(),
-            buyer: buyer.clone(),
-            amount,
-            fee,
-            arbitrator: Some(ArbitrationConfig::MultiSig(config)),
-            status: TradeStatus::Created,
-            expiry_time,
-            currency: token,
-            metadata: None,
-        };
-        save_trade(&env, trade_id, &trade);
-        events::emit_trade_created(&env, trade_id, seller, buyer, amount, trade.currency);
-        Ok(trade_id)
-    }
 
     /// Cast a vote on a disputed multi-sig trade.
     pub fn cast_vote(
@@ -509,8 +458,8 @@ impl StellarEscrowContract {
         arbitrator: Option<Address>,
         expiry_time: Option<u64>,
         currency: Option<Address>,
-        metadata: Option<TradeMetadata>,
-        metadata: OptionalMetadata,
+        metadata: Option<soroban_sdk::String>,
+        trigger: Option<PriceTrigger>,
     ) -> Result<u64, ContractError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -562,6 +511,7 @@ impl StellarEscrowContract {
             expiry_time,
             currency: token,
             metadata,
+            trigger,
         };
         save_trade(&env, trade_id, &trade);
         events::emit_trade_created(&env, trade_id, seller.clone(), buyer.clone(), amount);
@@ -580,7 +530,8 @@ impl StellarEscrowContract {
         multisig_config: MultiSigConfig,
         expiry_time: Option<u64>,
         currency: Option<Address>,
-        metadata: OptionalMetadata,
+        metadata: Option<soroban_sdk::String>,
+        trigger: Option<PriceTrigger>,
     ) -> Result<u64, ContractError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -616,7 +567,7 @@ impl StellarEscrowContract {
         validate_user_compliance(&env, &seller, amount)?;
         validate_user_compliance(&env, &buyer, amount)?;
 
-        if let OptionalMetadata::Some(ref meta) = metadata {
+        if let Some(ref meta) = metadata {
             validate_metadata(meta)?;
         }
 
@@ -637,6 +588,7 @@ impl StellarEscrowContract {
             expiry_time,
             currency: token,
             metadata,
+            trigger,
         };
         save_trade(&env, trade_id, &trade);
         events::emit_trade_created(&env, trade_id, seller.clone(), buyer.clone(), amount);
@@ -668,6 +620,8 @@ impl StellarEscrowContract {
         events::emit_trade_funded(&env, trade_id);
         analytics::on_trade_funded(&env);
         Ok(())
+    }
+
     pub fn complete_trade(env: Env, trade_id: u64) -> Result<(), ContractError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -1086,6 +1040,59 @@ impl StellarEscrowContract {
         max_usd: i128,
     ) -> Result<oracle::PriceValidation, ContractError> {
         oracle::validate_trade_price(&env, &base, &quote, trade_amount, min_usd, max_usd)
+    }
+
+    /// Check and execute a price trigger for a trade.
+    /// Can be called by anyone; trigger logic is automated based on oracle price.
+    pub fn execute_price_trigger(env: Env, trade_id: u64) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        let mut trade = get_trade(&env, trade_id)?;
+        let trigger = match &trade.trigger {
+            Some(t) => t.clone(),
+            None => return Err(ContractError::NoTrigger),
+        };
+        // Trigger can only execute for funded trades
+        if trade.status != TradeStatus::Funded {
+            return Err(ContractError::InvalidStatus);
+        }
+
+        if oracle::check_trigger(&env, &trigger)? {
+            match trigger.action {
+                TriggerAction::Cancel => {
+                    // Refund entire escrowed amount to buyer
+                    let token_client = token::Client::new(&env, &trade.currency);
+                    token_client.transfer(
+                        &env.current_contract_address(),
+                        &trade.buyer,
+                        &(trade.amount as i128),
+                    );
+                    trade.status = TradeStatus::Cancelled;
+                }
+                TriggerAction::Release => {
+                    // Release to seller, minus platform fee
+                    let token_client = token::Client::new(&env, &trade.currency);
+                    let payout = trade.amount.checked_sub(trade.fee).ok_or(ContractError::Overflow)?;
+                    token_client.transfer(
+                        &env.current_contract_address(),
+                        &trade.seller,
+                        &(payout as i128),
+                    );
+                    // Add fee to contract's accumulated revenue
+                    let current_fees = storage::get_currency_fees(&env, &trade.currency);
+                    let new_fees = current_fees.checked_add(trade.fee).ok_or(ContractError::Overflow)?;
+                    storage::set_currency_fees(&env, &trade.currency, new_fees);
+                    storage::add_accumulated_fees(&env, trade.fee)?;
+                    trade.status = TradeStatus::Triggered;
+                }
+            }
+            save_trade(&env, trade_id, &trade);
+            events::emit_trigger_executed(&env, trade_id, &trigger.action);
+        } else {
+            return Err(ContractError::PriceConditionNotMet);
+        }
+
+        Ok(())
     }
 
     // -------------------------------------------------------------------------
@@ -1625,7 +1632,8 @@ impl StellarEscrowContract {
             status: TradeStatus::AwaitingBridge,
             expiry_time: None,
             currency: get_usdc_token(&env)?,
-            metadata: OptionalMetadata::None,
+            metadata: None,
+            trigger: None,
         };
         save_trade(&env, trade_id, &trade);
         save_cross_chain_info(&env, trade_id, &CrossChainInfo {
