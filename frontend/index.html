@@ -81,6 +81,7 @@
                     <li role="none"><a href="#trade-dashboard" role="menuitem" class="nav-link" data-i18n="nav.tradeDashboard">My Trades</a></li>
                     <li role="none"><a href="#events" role="menuitem" class="nav-link" data-i18n="nav.events">View Events</a></li>
                     <li role="none"><a href="#search" role="menuitem" class="nav-link" data-i18n="nav.search">Search</a></li>
+                    <li role="none"><a href="#history" role="menuitem" class="nav-link" data-i18n="nav.history">History</a></li>
                     <li role="none"><a href="#disputes" role="menuitem" class="nav-link" data-i18n="nav.disputes">Disputes</a></li>
                     <li role="none"><a href="#arbitrator" role="menuitem" class="nav-link" data-i18n="nav.arbitrator">Arbitrator</a></li>
                     <li role="none"><a href="#help" role="menuitem" class="nav-link" data-i18n="nav.help">Help Center</a></li>
@@ -1110,6 +1111,95 @@
                 </div>
             </div>
         </section>
+        <!-- Transaction History Section -->
+        <section id="history" aria-labelledby="hx-heading" class="section">
+            <div class="container">
+                <div class="td-header">
+                    <h2 id="hx-heading" class="section-title">Transaction History</h2>
+                    <div class="hx-export-bar">
+                        <button id="hx-export-csv" type="button" class="btn btn-secondary btn-sm" aria-label="Export current view as CSV">Export CSV</button>
+                        <button id="hx-export-pdf" type="button" class="btn btn-secondary btn-sm" aria-label="Export current view as PDF">Export PDF</button>
+                    </div>
+                </div>
+
+                <div class="td-panel">
+                    <!-- Filters -->
+                    <form id="hx-filter-form" class="td-filter-bar" role="search" aria-label="Filter transaction history">
+                        <label for="hx-search" class="visually-hidden">Search</label>
+                        <input type="search" id="hx-search" class="filter-input td-search-input" placeholder="Search by ID, buyer, or seller…" aria-label="Search transactions" autocomplete="off">
+
+                        <label for="hx-status-filter" class="visually-hidden">Filter by status</label>
+                        <select id="hx-status-filter" class="filter-select" aria-label="Filter by status">
+                            <option value="">All Statuses</option>
+                            <option value="Created">Created</option>
+                            <option value="Funded">Funded</option>
+                            <option value="Completed">Completed</option>
+                            <option value="Disputed">Disputed</option>
+                            <option value="Cancelled">Cancelled</option>
+                        </select>
+
+                        <label for="hx-date-from" class="visually-hidden">From date</label>
+                        <input type="date" id="hx-date-from" class="filter-input hx-date-input" aria-label="From date">
+
+                        <label for="hx-date-to" class="visually-hidden">To date</label>
+                        <input type="date" id="hx-date-to" class="filter-input hx-date-input" aria-label="To date">
+
+                        <label for="hx-sort" class="visually-hidden">Sort by</label>
+                        <select id="hx-sort" class="filter-select" aria-label="Sort transactions">
+                            <option value="date_desc">Newest First</option>
+                            <option value="date_asc">Oldest First</option>
+                            <option value="amount_desc">Amount ↓</option>
+                            <option value="amount_asc">Amount ↑</option>
+                            <option value="status_asc">Status A–Z</option>
+                            <option value="status_desc">Status Z–A</option>
+                        </select>
+
+                        <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+                        <button type="reset" class="btn btn-secondary btn-sm">Reset</button>
+                    </form>
+
+                    <!-- Table -->
+                    <div class="table-container" role="region" aria-label="Transaction history table">
+                        <table class="data-table td-table" aria-describedby="hx-caption">
+                            <caption id="hx-caption" class="visually-hidden">Transaction history with date, status, amount, counterparty, and arbitrator</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Date</th>
+                                    <th scope="col">ID</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Amount (USDC)</th>
+                                    <th scope="col">Counterparty</th>
+                                    <th scope="col">Arbitrator</th>
+                                </tr>
+                            </thead>
+                            <tbody id="hx-tbody">
+                                <tr><td colspan="6" class="td-loading">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                        <p id="hx-empty" class="td-empty-msg" hidden>No transactions found.</p>
+                    </div>
+
+                    <!-- Pagination -->
+                    <nav class="pagination td-pagination hx-pagination" aria-label="Transaction history pagination">
+                        <button id="hx-prev" type="button" class="btn btn-secondary pagination-btn" aria-label="Previous page" disabled>← Prev</button>
+                        <span id="hx-page-info" class="hx-page-info" aria-live="polite"></span>
+                        <button id="hx-next" type="button" class="btn btn-secondary pagination-btn" aria-label="Next page">Next →</button>
+                    </nav>
+                </div>
+            </div>
+        </section>
+
+        <!-- Transaction Detail Modal -->
+        <div id="hx-detail-modal" class="modal td-detail-modal" hidden role="dialog" aria-labelledby="hx-detail-title" aria-modal="true" tabindex="-1">
+            <div class="modal-content td-detail-content">
+                <div class="modal-header">
+                    <h3 id="hx-detail-title" class="modal-title">Transaction Details</h3>
+                    <button id="hx-detail-close" type="button" class="btn btn-close" aria-label="Close transaction details">✕</button>
+                </div>
+                <div id="hx-detail-body" class="td-detail-body"></div>
+            </div>
+        </div>
+
     </main>
 
     <footer role="contentinfo">
@@ -1146,5 +1236,6 @@
     <script src="wallet.js"></script>
     <script type="module" src="app.js"></script>
     <script src="dashboard.js"></script>
+    <script src="history.js"></script>
 </body>
 </html>
