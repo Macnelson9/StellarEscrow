@@ -1,5 +1,5 @@
 import { ApiClient } from './client';
-import { Event, Trade } from './models';
+import { Event, EventCategory, EventFilterParams, Trade } from './models';
 
 export class TradesApi {
   constructor(private client: ApiClient) {}
@@ -28,14 +28,27 @@ export class TradesApi {
 export class EventsApi {
   constructor(private client: ApiClient) {}
 
-  async getEvents(limit = 100, tradeId?: string): Promise<Event[]> {
-    const params = new URLSearchParams({ limit: limit.toString() });
-    if (tradeId) params.append('tradeId', tradeId);
+  async getEvents(filters: EventFilterParams = {}): Promise<Event[]> {
+    const params = new URLSearchParams();
+    if (filters.limit !== undefined) params.set('limit', filters.limit.toString());
+    if (filters.offset !== undefined) params.set('offset', filters.offset.toString());
+    if (filters.event_type) params.set('event_type', filters.event_type);
+    if (filters.category) params.set('category', filters.category);
+    if (filters.trade_id) params.set('trade_id', filters.trade_id);
+    if (filters.from_ledger !== undefined) params.set('from_ledger', filters.from_ledger.toString());
+    if (filters.to_ledger !== undefined) params.set('to_ledger', filters.to_ledger.toString());
+    if (filters.from_time) params.set('from_time', filters.from_time);
+    if (filters.to_time) params.set('to_time', filters.to_time);
+    if (filters.contract_id) params.set('contract_id', filters.contract_id);
     return this.client.get(`/events?${params}`);
   }
 
   async getEventsByTrade(tradeId: string): Promise<Event[]> {
     return this.client.get(`/events/trade/${tradeId}`);
+  }
+
+  async getEventsByCategory(category: EventCategory, limit = 50): Promise<Event[]> {
+    return this.getEvents({ category, limit });
   }
 
   async getEvent(id: string): Promise<Event> {

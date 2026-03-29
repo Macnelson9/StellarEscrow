@@ -188,6 +188,8 @@ pub async fn replay_events(
     for event in &events {
         let ws_message = WebSocketMessage {
             event_type: event.event_type.clone(),
+            category: event.category.clone(),
+            version: event.schema_version as u32,
             data: event.data.clone(),
             timestamp: event.timestamp,
         };

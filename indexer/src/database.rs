@@ -58,13 +58,15 @@ impl Database {
     pub async fn insert_event(&self, event: &Event) -> Result<(), AppError> {
         sqlx::query(
             r#"
-            INSERT INTO events (id, event_type, contract_id, ledger, transaction_hash, timestamp, data, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO events (id, event_type, category, schema_version, contract_id, ledger, transaction_hash, timestamp, data, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (id) DO NOTHING
             "#,
         )
         .bind(event.id)
         .bind(&event.event_type)
+        .bind(&event.category)
+        .bind(event.schema_version)
         .bind(&event.contract_id)
         .bind(event.ledger)
         .bind(&event.transaction_hash)
@@ -77,13 +79,64 @@ impl Database {
         Ok(())
     }
 
+    /// Batch-insert up to `events.len()` events in a single transaction.
+    /// Conflicts on `id` are silently skipped (idempotent replay).
+    pub async fn insert_events_batch(&self, events: &[Event]) -> Result<crate::models::BatchInsertResult, AppError> {
+        if events.is_empty() {
+            return Ok(crate::models::BatchInsertResult { inserted: 0, skipped: 0 });
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let mut inserted = 0usize;
+
+        for event in events {
+            let result = sqlx::query(
+                r#"
+                INSERT INTO events (id, event_type, category, schema_version, contract_id, ledger, transaction_hash, timestamp, data, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (id) DO NOTHING
+                "#,
+            )
+            .bind(event.id)
+            .bind(&event.event_type)
+            .bind(&event.category)
+            .bind(event.schema_version)
+            .bind(&event.contract_id)
+            .bind(event.ledger)
+            .bind(&event.transaction_hash)
+            .bind(event.timestamp)
+            .bind(&event.data)
+            .bind(event.created_at)
+            .execute(&mut *tx)
+            .await?;
+
+            if result.rows_affected() > 0 {
+                inserted += 1;
+            }
+        }
+
+        tx.commit().await?;
+        let skipped = events.len() - inserted;
+        Ok(crate::models::BatchInsertResult { inserted, skipped })
+    }
+
     pub async fn get_events(&self, query: &EventQuery) -> Result<Vec<Event>, AppError> {
-        let mut sql = "SELECT id, event_type, contract_id, ledger, transaction_hash, timestamp, data, created_at FROM events WHERE 1=1".to_string();
+        let mut sql = "SELECT id, event_type, category, schema_version, contract_id, ledger, transaction_hash, timestamp, data, created_at FROM events WHERE 1=1".to_string();
         let mut owned: Vec<String> = vec![];
 
         if let Some(event_type) = &query.event_type {
             sql.push_str(&format!(" AND event_type = ${}", owned.len() + 1));
             owned.push(event_type.clone());
+        }
+
+        if let Some(category) = &query.category {
+            sql.push_str(&format!(" AND category = ${}", owned.len() + 1));
+            owned.push(category.clone());
+        }
+
+        if let Some(contract_id) = &query.contract_id {
+            sql.push_str(&format!(" AND contract_id = ${}", owned.len() + 1));
+            owned.push(contract_id.clone());
         }
 
         if let Some(trade_id) = query.trade_id {
@@ -101,6 +154,17 @@ impl Database {
             owned.push(to_ledger.to_string());
         }
 
+        // Timestamp range filters use positional params bound separately below
+        let mut time_params: Vec<chrono::DateTime<chrono::Utc>> = vec![];
+        if let Some(from_time) = query.from_time {
+            sql.push_str(&format!(" AND timestamp >= ${}", owned.len() + time_params.len() + 1));
+            time_params.push(from_time);
+        }
+        if let Some(to_time) = query.to_time {
+            sql.push_str(&format!(" AND timestamp <= ${}", owned.len() + time_params.len() + 1));
+            time_params.push(to_time);
+        }
+
         sql.push_str(" ORDER BY ledger DESC, timestamp DESC");
 
         if let Some(limit) = query.limit {
@@ -112,9 +176,11 @@ impl Database {
         }
 
         let mut query_builder = sqlx::query(&sql);
-
         for s in &owned {
             query_builder = query_builder.bind(s.as_str());
+        }
+        for t in &time_params {
+            query_builder = query_builder.bind(*t);
         }
 
         let rows = query_builder.fetch_all(&self.pool).await?;
@@ -124,6 +190,8 @@ impl Database {
             .map(|row| Event {
                 id: row.get("id"),
                 event_type: row.get("event_type"),
+                category: row.get("category"),
+                schema_version: row.get("schema_version"),
                 contract_id: row.get("contract_id"),
                 ledger: row.get("ledger"),
                 transaction_hash: row.get("transaction_hash"),
@@ -139,7 +207,7 @@ impl Database {
     pub async fn get_event_by_id(&self, id: Uuid) -> Result<Event, AppError> {
         let row = sqlx::query(
             r#"
-            SELECT id, event_type, contract_id, ledger, transaction_hash, timestamp, data, created_at
+            SELECT id, event_type, category, schema_version, contract_id, ledger, transaction_hash, timestamp, data, created_at
             FROM events WHERE id = $1
             "#,
         )
@@ -151,6 +219,8 @@ impl Database {
         Ok(Event {
             id: row.get("id"),
             event_type: row.get("event_type"),
+            category: row.get("category"),
+            schema_version: row.get("schema_version"),
             contract_id: row.get("contract_id"),
             ledger: row.get("ledger"),
             transaction_hash: row.get("transaction_hash"),
@@ -181,6 +251,14 @@ impl Database {
             sql.push_str(&format!(" AND event_type = ${}", bindings.len() + 1));
             bindings.push(event_type.clone());
         }
+        if let Some(category) = &query.category {
+            sql.push_str(&format!(" AND category = ${}", bindings.len() + 1));
+            bindings.push(category.clone());
+        }
+        if let Some(contract_id) = &query.contract_id {
+            sql.push_str(&format!(" AND contract_id = ${}", bindings.len() + 1));
+            bindings.push(contract_id.clone());
+        }
         if let Some(trade_id) = query.trade_id {
             sql.push_str(&format!(" AND data->>'trade_id' = ${}", bindings.len() + 1));
             bindings.push(trade_id.to_string());
@@ -198,6 +276,16 @@ impl Database {
         for b in &bindings {
             q = q.bind(b);
         }
+        // Timestamp filters bound separately (DateTime type)
+        if let Some(from_time) = query.from_time {
+            sql.push_str(&format!(" AND timestamp >= ${}", bindings.len() + 1));
+            q = q.bind(from_time);
+        }
+        if let Some(to_time) = query.to_time {
+            sql.push_str(&format!(" AND timestamp <= ${}", bindings.len() + 1));
+            q = q.bind(to_time);
+        }
+
         let row = q.fetch_one(&self.pool).await?;
         Ok(row.get::<i64, _>(0))
     }
@@ -210,7 +298,7 @@ impl Database {
     ) -> Result<Vec<Event>, AppError> {
         let rows = sqlx::query(
             r#"
-            SELECT id, event_type, contract_id, ledger, transaction_hash, timestamp, data, created_at
+            SELECT id, event_type, category, schema_version, contract_id, ledger, transaction_hash, timestamp, data, created_at
             FROM events
             WHERE contract_id = $1 AND ledger >= $2 AND ledger <= $3
             ORDER BY ledger ASC, timestamp ASC
@@ -227,6 +315,8 @@ impl Database {
             .map(|row| Event {
                 id: row.get("id"),
                 event_type: row.get("event_type"),
+                category: row.get("category"),
+                schema_version: row.get("schema_version"),
                 contract_id: row.get("contract_id"),
                 ledger: row.get("ledger"),
                 transaction_hash: row.get("transaction_hash"),

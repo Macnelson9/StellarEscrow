@@ -38,11 +38,18 @@ export function isTrade(value: unknown): value is Trade {
   );
 }
 
+const EVENT_CATEGORIES = new Set<string>([
+  'trade', 'arb', 'fee', 'tmpl', 'sub', 'gov', 'sys', 'ins', 'oracle',
+]);
+
 export function isEvent(value: unknown): value is Event {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
     typeof value.type === 'string' &&
+    typeof value.category === 'string' &&
+    EVENT_CATEGORIES.has(value.category) &&
+    typeof value.schemaVersion === 'number' &&
     typeof value.tradeId === 'string' &&
     typeof value.timestamp === 'string' &&
     isRecord(value.data)

@@ -14,6 +14,8 @@ mod tests {
         Event {
             id: Uuid::new_v4(),
             event_type: event_type.to_string(),
+            category: "trade".to_string(),
+            schema_version: 2,
             contract_id: "test_contract".to_string(),
             ledger: 1000,
             transaction_hash: "test_hash".to_string(),
