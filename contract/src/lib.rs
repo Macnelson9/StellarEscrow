@@ -543,6 +543,7 @@ impl StellarEscrowContract {
         save_trade(&env, trade_id, &trade);
         events::emit_trade_created(&env, trade_id, seller.clone(), buyer.clone(), amount);
         events::emit_compliance_passed(&env, trade_id, seller, buyer, amount);
+        analytics::on_trade_created(&env, amount, &trade.seller, &trade.buyer);
         Ok(trade_id)
     }
 
@@ -829,8 +830,19 @@ impl StellarEscrowContract {
                 }
                 save_arbitrator_reputation(&env, arbitrator, &rep);
                 events::emit_arb_rep_updated(&env, arbitrator.clone(), rep.resolved_count, rep.rating_sum, rep.rating_count);
+                let resolution_code: u8 = match resolution {
+                    DisputeResolution::ReleaseToBuyer => 0,
+                    DisputeResolution::ReleaseToSeller => 1,
+                    DisputeResolution::Partial { .. } => 2,
+                };
+                analytics::on_dispute_resolved(&env, arbitrator, resolution_code);
             }
             Some(ArbitrationConfig::MultiSig(config)) => {
+                let resolution_code: u8 = match resolution {
+                    DisputeResolution::ReleaseToBuyer => 0,
+                    DisputeResolution::ReleaseToSeller => 1,
+                    DisputeResolution::Partial { .. } => 2,
+                };
                 for i in 0..config.arbitrators.len() {
                     let arb = config.arbitrators.get(i).unwrap();
                     let mut rep = storage::get_arbitrator_reputation(&env, arb);
@@ -842,28 +854,17 @@ impl StellarEscrowContract {
                     }
                     save_arbitrator_reputation(&env, arb, &rep);
                     events::emit_arb_rep_updated(&env, arb.clone(), rep.resolved_count, rep.rating_sum, rep.rating_count);
+                    analytics::on_dispute_resolved(&env, &arb, resolution_code);
                 }
                 // Clear votes after resolution
                 storage::clear_votes_for_trade(&env, trade_id, &config.arbitrators);
             }
             None => {}
         }
-        save_arbitrator_reputation(&env, &arbitrator, &rep);
-        events::emit_arb_rep_updated(&env, arbitrator.clone(), rep.resolved_count, rep.rating_sum, rep.rating_count);
-        set_currency_fees(&env, &trade.currency, new_fees);
-        let token = get_usdc_token(&env)?;
-        let token_client = TokenClient::new(&env, &token);
-        token_client.transfer(&env.current_contract_address(), &recipient, &(payout as i128));
-        // Single read-modify-write for fees
-        add_accumulated_fees(&env, trade.fee)?;
-        let resolution_code: u8 = match resolution {
-            DisputeResolution::ReleaseToBuyer => 0,
-            DisputeResolution::ReleaseToSeller => 1,
-            DisputeResolution::Partial { .. } => 2,
-        };
-        analytics::on_dispute_resolved(&env, &arbitrator, resolution_code);
-        events::emit_dispute_resolved(&env, trade_id, resolution, recipient);
-        Ok(()) for the arbitrator of a resolved dispute.
+        Ok(())
+    }
+
+    /// Rate the arbitrator of a resolved dispute.
     /// Only the buyer or seller of the trade may rate, once each.
     pub fn rate_arbitrator(env: Env, trade_id: u64, rater: Address, stars: u32) -> Result<(), ContractError> {
         if !is_initialized(&env) {
