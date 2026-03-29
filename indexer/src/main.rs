@@ -184,6 +184,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize Cache Service
     let cache_service = Arc::new(CacheService::new(config.cache.clone()).await);
+    let cache_warmer = cache_service.clone();
+    let cache_db = database.clone();
+    let cache_contract_id = config.stellar.contract_id.clone();
+    tokio::spawn(async move {
+        if let Err(e) = cache_warmer.warm_core(&cache_db, &cache_contract_id).await {
+            warn!("Initial cache warm failed: {}", e);
+        }
+
+        let interval_secs = std::cmp::max(30, cache_warmer.ttl_default().as_secs());
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+        loop {
+            interval.tick().await;
+            if let Err(e) = cache_warmer.warm_core(&cache_db, &cache_contract_id).await {
+                warn!("Scheduled cache warm failed: {}", e);
+            }
+        }
+    });
 
     // Initialize Backup Service
     let mut backup_config = config.backup.clone();
@@ -313,6 +330,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Cache
         .route("/cache/stats", get(get_cache_stats))
         .route("/cache/invalidate", post(invalidate_cache))
+        .route("/cache/warm", post(warm_cache))
         // Backup
         .route("/backup/trigger", post(trigger_backup))
         .route("/backup/status", get(get_backup_status))
@@ -340,6 +358,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(Router::new().nest("/api/v1", v1_api))
         .with_state(AppState {
             database,
+            stellar_contract_id: config.stellar.contract_id.clone(),
             ws_manager,
             health: health_state,
             fraud_service,

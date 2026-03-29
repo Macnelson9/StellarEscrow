@@ -58,6 +58,9 @@ pub async fn api_index() -> Json<serde_json::Value> {
             "search_suggestions":"GET /search/suggestions",
             "search_history":  "GET  /search/history",
             "search_analytics":"GET  /search/analytics",
+            "cache_stats":     "GET  /cache/stats",
+            "cache_invalidate":"POST /cache/invalidate",
+            "cache_warm":      "POST /cache/warm",
             "fraud_review":    "POST /fraud/review",
             "notif_prefs_get": "GET  /notifications/preferences/:address",
             "notif_prefs_put": "PUT  /notifications/preferences/:address",
@@ -98,11 +101,14 @@ pub async fn get_events(
         offset: Some(offset),
         ..params
     };
-
-    let (events, total) = tokio::try_join!(
-        state.database.get_events(&query),
-        state.database.count_events(&query),
-    )?;
+    let cache_key = CacheService::events_query_key(&query);
+    let events = state
+        .cache_service
+        .get_or_load(&cache_key, state.cache_service.ttl_events(), || async {
+            state.database.get_events(&query).await
+        })
+        .await?;
+    let total = state.database.count_events(&query).await?;
 
     Ok(Json(PaginatedResponse {
         has_more: offset + limit < total,
@@ -198,6 +204,16 @@ pub async fn replay_events(
         state.ws_manager.broadcast(ws_message).await;
     }
 
+    state
+        .cache_service
+        .invalidate_pattern("events:list:*")
+        .await;
+    state.cache_service.invalidate(crate::cache_service::KEY_STATS).await;
+    state
+        .cache_service
+        .invalidate(crate::cache_service::KEY_INDEXER_STATUS)
+        .await;
+
     Ok(Json(
         json!({ "replayed": events.len(), "from_ledger": request.from_ledger, "to_ledger": request.to_ledger }),
     ))
@@ -212,41 +228,59 @@ pub async fn ws_handler(
 
 /// GET /status — indexer sync state for loading indicators.
 pub async fn get_status(State(state): State<AppState>) -> Result<Json<IndexerStatus>, AppError> {
-    let (total_events, latest) = tokio::try_join!(
-        state.database.get_event_count(None),
-        state.database.get_latest_ledger_global(),
-    )?;
+    let status = state
+        .cache_service
+        .get_or_load(
+            crate::cache_service::KEY_INDEXER_STATUS,
+            state.cache_service.ttl_default(),
+            || async {
+                let (total_events, latest) = tokio::try_join!(
+                    state.database.get_event_count(None),
+                    state.database.get_latest_ledger_global(),
+                )?;
 
-    let (latest_ledger, latest_ledger_time) = match latest {
-        Some((l, t)) => (Some(l), Some(t)),
-        None => (None, None),
-    };
+                let (latest_ledger, latest_ledger_time) = match latest {
+                    Some((l, t)) => (Some(l), Some(t)),
+                    None => (None, None),
+                };
 
-    Ok(Json(IndexerStatus {
-        syncing: true, // always true while the monitor is running
-        latest_ledger,
-        latest_ledger_time,
-        total_events,
-        server_time: chrono::Utc::now(),
-    }))
+                Ok(IndexerStatus {
+                    syncing: true,
+                    latest_ledger,
+                    latest_ledger_time,
+                    total_events,
+                    server_time: chrono::Utc::now(),
+                })
+            },
+        )
+        .await?;
+
+    Ok(Json(status))
 }
 
 /// GET /stats — per-event-type counts for dashboard skeleton panels.
 pub async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, AppError> {
-    let (total_events, type_counts) = tokio::try_join!(
-        state.database.get_event_count(None),
-        state.database.get_event_type_counts(),
-    )?;
+    let stats = state
+        .cache_service
+        .get_or_load(crate::cache_service::KEY_STATS, state.cache_service.ttl_default(), || async {
+            let (total_events, type_counts) = tokio::try_join!(
+                state.database.get_event_count(None),
+                state.database.get_event_type_counts(),
+            )?;
 
-    let by_type = type_counts
-        .into_iter()
-        .map(|(event_type, count)| EventStats { event_type, count })
-        .collect();
+            let by_type = type_counts
+                .into_iter()
+                .map(|(event_type, count)| EventStats { event_type, count })
+                .collect();
 
-    Ok(Json(StatsResponse {
-        total_events,
-        by_type,
-    }))
+            Ok(StatsResponse {
+                total_events,
+                by_type,
+            })
+        })
+        .await?;
+
+    Ok(Json(stats))
 }
 
 pub async fn global_search(
@@ -295,7 +329,13 @@ pub async fn search_trades(
     Query(params): Query<TradeSearchQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<crate::models::TradeSearchResult>>, AppError> {
-    let rows = state.database.search_trades(&params).await?;
+    let cache_key = CacheService::search_trades_key(&params);
+    let rows = state
+        .cache_service
+        .get_or_load(&cache_key, state.cache_service.ttl_default(), || async {
+            state.database.search_trades(&params).await
+        })
+        .await?;
     if let Some(q) = params.q {
         if !q.is_empty() {
             state.database.record_search(&q, "trades").await?;
@@ -384,6 +424,7 @@ pub async fn update_fraud_review(
 #[derive(Clone)]
 pub struct AppState {
     pub database: Arc<Database>,
+    pub stellar_contract_id: String,
     pub ws_manager: Arc<WebSocketManager>,
     pub health: HealthState,
     pub fraud_service: Arc<FraudDetectionService>,
@@ -688,8 +729,8 @@ pub async fn export_analytics(
 pub async fn get_cache_stats(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    let stats = state.cache_service.get_stats_snapshot().await;
-    Json(serde_json::to_value(&stats).unwrap_or_default())
+    let snapshot = state.cache_service.snapshot().await;
+    Json(serde_json::to_value(&snapshot).unwrap_or_default())
 }
 
 #[derive(Deserialize)]
@@ -712,6 +753,17 @@ pub async fn invalidate_cache(
         return Ok(Json(json!({ "invalidated_pattern": pattern })));
     }
     Err(AppError::NotFound("Provide key or pattern".to_string()))
+}
+
+/// POST /cache/warm - trigger cache warming for core hot keys.
+pub async fn warm_cache(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let report = state
+        .cache_service
+        .warm_core(&state.database, &state.stellar_contract_id)
+        .await?;
+    Ok(Json(serde_json::to_value(&report).unwrap_or_default()))
 }
 
 // =============================================================================
@@ -839,7 +891,13 @@ pub async fn run_compliance_check(
         .compliance_service
         .check_address(&payload.address, payload.trade_id)
         .await;
-    Ok(Json(serde_json::to_value(&check).unwrap_or_default()))
+    let cache_key = CacheService::compliance_status_key(&payload.address);
+    let value = serde_json::to_value(&check).unwrap_or_default();
+    state
+        .cache_service
+        .set(&cache_key, &value, state.cache_service.ttl_default())
+        .await;
+    Ok(Json(value))
 }
 
 /// GET /compliance/status/:address — get latest compliance status for an address.
@@ -847,10 +905,19 @@ pub async fn get_compliance_status(
     Path(address): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    match state.compliance_service.get_address_status(&address).await {
-        Some(check) => Ok(Json(serde_json::to_value(&check).unwrap_or_default())),
-        None => Ok(Json(json!({ "status": "not_found", "address": address }))),
-    }
+    let cache_key = CacheService::compliance_status_key(&address);
+    let response = state
+        .cache_service
+        .get_or_load(&cache_key, state.cache_service.ttl_default(), || async {
+            let value = match state.compliance_service.get_address_status(&address).await {
+                Some(check) => serde_json::to_value(&check).unwrap_or_default(),
+                None => json!({ "status": "not_found", "address": address }),
+            };
+            Ok(value)
+        })
+        .await?;
+
+    Ok(Json(response))
 }
 
 /// POST /compliance/review — manually review a compliance check.
@@ -869,6 +936,10 @@ pub async fn review_compliance_check(
         .review_check(payload.check_id, status, &payload.reviewer, &payload.notes)
         .await
         .map_err(|e| AppError::NotFound(e.to_string()))?;
+    state
+        .cache_service
+        .invalidate_pattern("compliance:*")
+        .await;
     Ok(Json(json!({ "status": "updated", "check_id": payload.check_id })))
 }
 
