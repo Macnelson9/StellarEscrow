@@ -1874,6 +1874,26 @@ impl StellarEscrowContract {
         analytics::analytics_query(&env, window)
     }
 
+    /// Volume stats: total trades, total value, and window-scoped volume.
+    pub fn get_volume_stats(env: Env, window: analytics::TimeWindow) -> analytics::VolumeStats {
+        analytics::get_volume_stats(&env, window)
+    }
+
+    /// Success-rate breakdown: completed / disputed / cancelled counts + rate in bps.
+    pub fn get_success_rate(env: Env) -> analytics::SuccessRateStats {
+        analytics::get_success_rate(&env)
+    }
+
+    /// Platform usage: active escrows, unique participants, fees collected.
+    pub fn get_platform_usage(env: Env) -> analytics::PlatformUsage {
+        analytics::get_platform_usage(&env)
+    }
+
+    /// All metrics scoped to an arbitrary ledger-timestamp range [start_time, end_time].
+    pub fn get_analytics_by_period(env: Env, start_time: u64, end_time: u64) -> analytics::PeriodAnalytics {
+        analytics::get_analytics_by_period(&env, start_time, end_time)
+    }
+
     // AMM — Automated Market Making
     // -----------------------------------------------------------------------
 

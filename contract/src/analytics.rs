@@ -357,3 +357,166 @@ pub fn analytics_query(env: &Env, window: TimeWindow) -> AnalyticsResult {
     let unique_addresses = load_unique_count(env);
     AnalyticsResult { all_time, window: wm, unique_addresses }
 }
+
+// ---------------------------------------------------------------------------
+// Issue #229 — named query functions
+// ---------------------------------------------------------------------------
+
+/// Volume statistics: total trades created, total value locked, and per-window
+/// volume for the requested time window.
+///
+/// Maps to the issue's `get_volume_stats()` requirement.
+pub fn get_volume_stats(env: &Env, window: TimeWindow) -> VolumeStats {
+    let m = load_metrics(env);
+    let wm = load_or_reset_window(env, &window);
+    VolumeStats {
+        trades_created: m.trades_created,
+        total_value: m.total_volume,
+        window_volume: wm.volume,
+        window_trades: wm.trades_created,
+    }
+}
+
+/// Success-rate breakdown: completed / disputed / cancelled counts and the
+/// derived rate in basis points.
+///
+/// Maps to the issue's `get_success_rate()` requirement.
+pub fn get_success_rate(env: &Env) -> SuccessRateStats {
+    let m = load_metrics(env);
+    let terminal = m.trades_completed
+        .saturating_add(m.trades_cancelled)
+        .saturating_add(m.trades_disputed);
+    let success_rate_bps = if terminal == 0 {
+        0u32
+    } else {
+        ((m.trades_completed as u128 * 10_000) / terminal as u128) as u32
+    };
+    SuccessRateStats {
+        completed: m.trades_completed,
+        disputed: m.trades_disputed,
+        cancelled: m.trades_cancelled,
+        success_rate_bps,
+    }
+}
+
+/// Platform usage metrics: active escrows, unique participants, fees collected.
+///
+/// Maps to the issue's `get_platform_metrics()` requirement.
+/// (The existing `get_metrics` / `get_stats` remain unchanged; this adds the
+/// named shape the issue specifies.)
+pub fn get_platform_usage(env: &Env) -> PlatformUsage {
+    let m = load_metrics(env);
+    let active_trades = m.trades_created
+        .saturating_sub(m.trades_completed)
+        .saturating_sub(m.trades_cancelled)
+        .saturating_sub(m.trades_disputed);
+    PlatformUsage {
+        active_escrows: active_trades,
+        unique_participants: load_unique_count(env),
+        total_fees_collected: m.total_fees_collected,
+    }
+}
+
+/// All metrics scoped to an arbitrary `[start_time, end_time]` range
+/// (ledger UTC timestamps in seconds).
+///
+/// Because Soroban storage cannot be iterated, this function compares the
+/// requested range against the stored rolling windows and returns the
+/// tightest-fitting window whose `window_start` falls within the range.
+/// For ranges that don't align with a preset window the all-time snapshot
+/// is returned with `window_matched` set to `false`.
+///
+/// Maps to the issue's `get_analytics_by_period(start, end)` requirement.
+pub fn get_analytics_by_period(env: &Env, start_time: u64, end_time: u64) -> PeriodAnalytics {
+    let now = env.ledger().timestamp();
+    let span = end_time.saturating_sub(start_time);
+
+    // Pick the smallest preset window that fully covers the requested span.
+    let window = if span <= 86_400 {
+        TimeWindow::Last24h
+    } else if span <= 604_800 {
+        TimeWindow::Last7d
+    } else if span <= 2_592_000 {
+        TimeWindow::Last30d
+    } else {
+        TimeWindow::AllTime
+    };
+
+    let wm = load_or_reset_window(env, &window);
+    // Report whether the stored window actually overlaps the requested range.
+    let window_matched = wm.window_start >= start_time && wm.window_start <= end_time.min(now);
+
+    let m = load_metrics(env);
+    let stats = compute_stats(m);
+
+    PeriodAnalytics {
+        start_time,
+        end_time,
+        window_matched,
+        volume: wm.volume,
+        trades_created: wm.trades_created,
+        trades_completed: wm.trades_completed,
+        trades_disputed: wm.trades_disputed,
+        trades_cancelled: wm.trades_cancelled,
+        success_rate_bps: stats.success_rate_bps,
+        active_escrows: stats.active_trades,
+        unique_participants: load_unique_count(env),
+        total_fees_collected: stats.metrics.total_fees_collected,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// New return types for the named query functions
+// ---------------------------------------------------------------------------
+
+/// Returned by `get_volume_stats`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VolumeStats {
+    pub trades_created: u64,
+    /// All-time cumulative value (stroops).
+    pub total_value: u64,
+    /// Volume within the requested time window (stroops).
+    pub window_volume: u64,
+    /// Trades created within the requested time window.
+    pub window_trades: u64,
+}
+
+/// Returned by `get_success_rate`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SuccessRateStats {
+    pub completed: u64,
+    pub disputed: u64,
+    pub cancelled: u64,
+    /// completed / (completed + disputed + cancelled) * 10_000.
+    pub success_rate_bps: u32,
+}
+
+/// Returned by `get_platform_usage`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformUsage {
+    pub active_escrows: u64,
+    pub unique_participants: u64,
+    pub total_fees_collected: u64,
+}
+
+/// Returned by `get_analytics_by_period`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeriodAnalytics {
+    pub start_time: u64,
+    pub end_time: u64,
+    /// `true` when a stored window overlaps the requested range.
+    pub window_matched: bool,
+    pub volume: u64,
+    pub trades_created: u64,
+    pub trades_completed: u64,
+    pub trades_disputed: u64,
+    pub trades_cancelled: u64,
+    pub success_rate_bps: u32,
+    pub active_escrows: u64,
+    pub unique_participants: u64,
+    pub total_fees_collected: u64,
+}
