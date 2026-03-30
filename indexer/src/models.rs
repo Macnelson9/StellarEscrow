@@ -83,6 +83,40 @@ pub struct FeesWithdrawnData {
     pub to: String,
 }
 
+// =============================================================================
+// Trade Detail View (Issue #31)
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeTimelineEntry {
+    pub status: String,
+    pub ledger: i64,
+    pub timestamp: Option<DateTime<Utc>>,
+    pub transaction_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeDetailResponse {
+    pub trade_id: i64,
+    pub seller: String,
+    pub buyer: String,
+    pub amount: i64,
+    pub fee: Option<i64>,
+    pub seller_payout: Option<i64>,
+    pub arbitrator: Option<String>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub timeline: Vec<TradeTimelineEntry>,
+    pub transaction_history: Vec<Event>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeDetailQuery {
+    pub viewer: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventQuery {
     pub limit: Option<i64>,
@@ -484,6 +518,28 @@ pub struct NotificationPreferences {
     pub updated_at: DateTime<Utc>,
 }
 
+impl NotificationPreferences {
+    pub fn default_for_address(address: impl Into<String>) -> Self {
+        Self {
+            address: address.into(),
+            email_enabled: false,
+            email_address: None,
+            sms_enabled: false,
+            phone_number: None,
+            push_enabled: false,
+            push_token: None,
+            on_trade_created: true,
+            on_trade_funded: true,
+            on_trade_completed: true,
+            on_trade_confirmed: true,
+            on_dispute_raised: true,
+            on_dispute_resolved: true,
+            on_trade_cancelled: true,
+            updated_at: Utc::now(),
+        }
+    }
+}
+
 /// Upsert payload — all fields optional so callers only send what they want to change.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateNotificationPreferences {
@@ -582,4 +638,9 @@ pub struct UserSearchQuery {
     pub q: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PushRegistrationRequest {
+    pub device_token: String,
+    pub platform: String,
+    pub address: String,
 }
