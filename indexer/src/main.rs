@@ -219,6 +219,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let webhook_service = Arc::new(WebhookService::new(database.clone()));
     webhook_service.load_endpoints().await;
 
+    // Scheduled audit log retention purge
+    if config.audit.purge_interval_hours > 0 {
+        let db_purge = database.clone();
+        let retention_days = config.audit.retention_days as i64;
+        let interval_hours = config.audit.purge_interval_hours;
+        tokio::spawn(async move {
+            let interval = tokio::time::Duration::from_secs(interval_hours * 3600);
+            loop {
+                tokio::time::sleep(interval).await;
+                match db_purge.purge_old_audit_logs(retention_days).await {
+                    Ok(n) => tracing::info!("Audit retention: purged {} logs older than {} days", n, retention_days),
+                    Err(e) => tracing::warn!("Audit retention purge failed: {}", e),
+                }
+            }
+        });
+    }
     // Initialize job queue + worker
     let job_queue = Arc::new(tokio::sync::Mutex::new(
         JobQueue::new(&config.cache.redis_url).await?
