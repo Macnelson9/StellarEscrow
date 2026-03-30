@@ -4,6 +4,7 @@
   import { themeStore } from '$lib/theme';
   import ThemeToggle from '$lib/ThemeToggle.svelte';
   import SearchBar from '$lib/SearchBar.svelte';
+  import OfflineIndicator from '$lib/OfflineIndicator.svelte';
 
   onMount(() => themeStore.init());
 </script>
@@ -17,6 +18,7 @@
   <main>
     <slot />
   </main>
+  <OfflineIndicator />
 </div>
 
 <style global lang="postcss">
