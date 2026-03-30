@@ -19,6 +19,9 @@ pub enum TradeStatus {
     Disputed,
     Cancelled,
     AwaitingBridge,
+    AwaitingBridge, // cross-chain: waiting for bridge oracle confirmation
+    BridgeFailed,   // cross-chain: bridge attestation failed
+    Triggered,      // price-based trigger executed
 }
 
 #[contracttype]
@@ -35,6 +38,29 @@ pub enum ArbitrationConfig {
     Single(Address),
 }
 
+// ---------------------------------------------------------------------------
+// Price Triggers
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TriggerAction {
+    Cancel,
+    Release,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceTrigger {
+    pub base: Address,
+    pub quote: Address,
+    pub target_price: i128,
+    /// If true, trigger when price >= target_price. If false, trigger when price <= target_price.
+    pub trigger_above: bool,
+    pub action: TriggerAction,
+}
+
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Trade {
@@ -48,6 +74,10 @@ pub struct Trade {
     pub expiry_time: Option<u64>,
     pub currency: Address,
     pub metadata: OptionalMetadata,
+    /// Optional JSON-like string metadata (product info, shipping details, etc.)
+    pub metadata: Option<String>,
+    /// Optional price-based trigger
+    pub trigger: Option<PriceTrigger>,
 }
 
 #[contracttype]

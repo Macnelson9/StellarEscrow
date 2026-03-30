@@ -8,6 +8,13 @@ mod errors;
 mod events;
 mod storage;
 pub mod types;
+mod subscription;
+mod templates;
+mod tiers;
+mod types;
+mod upgrade;
+mod proxy;
+mod insurance;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 
@@ -20,6 +27,44 @@ pub use types::{
     ArbitrationConfig, CrossChainInfo, DisputeResolution, InsurancePolicy, KycStatus,
     OptionalMetadata, Trade, TradeStatus, UserCompliance, MAX_INSURANCE_PREMIUM_BPS,
     MAX_METADATA_SIZE,
+    ArbitrationConfig, ArbitratorReputation, ArbitratorVote, DisclosureGrant, DisputeResolution,
+    MultiSigConfig, PriceTrigger, Proposal, ProposalAction, ProposalStatus, Subscription,
+    SubscriptionTier, TemplateTerms, TemplateVersion, Trade, TradePrivacy, TradeStatus,
+    TradeTemplate, TriggerAction, UserTier, UserTierInfo, VotingSummary,
+};
+pub use queries::{PageParams, SortDirection, TradeFilter, TradeSortField, TradeStats};
+pub use oracle::{OracleEntry, PriceData, PriceValidation};
+pub use bridge::{BridgeProvider, CrossChainTrade, BridgeAttestation, BridgeValidation};
+pub use upgrade::{RollbackSnapshot, UpgradeProposal};
+pub use proxy::*;
+
+use storage::{
+    get_accumulated_fees, get_admin, get_fee_bps, get_trade, get_usdc_token,
+    has_arbitrator, has_initialized, increment_trade_counter, is_initialized, is_paused,
+    remove_arbitrator, save_arbitrator, save_trade, set_accumulated_fees, set_admin, set_fee_bps,
+    ArbitratorReputation, DisputeResolution, TierConfig, TemplateTerms,
+    TemplateVersion, Trade, TradeStatus, TradeTemplate, UserTier, UserTierInfo,
+};
+
+use storage::{
+    get_accumulated_fees, get_admin, get_fee_bps, get_trade, get_trade_counter, get_usdc_token,
+    has_arbitrator, has_initialized, has_rated, increment_trade_counter, is_initialized, is_paused,
+    mark_rated, remove_arbitrator, save_arbitrator, save_arbitrator_reputation, save_trade,
+    set_accumulated_fees, set_admin, set_fee_bps, set_initialized, set_paused, set_trade_counter,
+    set_usdc_token,
+    CrossChainInfo, DisputeResolution, InsurancePolicy,
+    TierConfig, TemplateTerms, TemplateVersion, Trade, TradeStatus,
+    TradeTemplate, UserTier, UserTierInfo,
+};
+
+use storage::{
+    add_accumulated_fees, get_accumulated_fees, get_admin, get_currency_fees, get_fee_bps,
+    get_trade, get_trade_counter, get_usdc_token, has_arbitrator, has_initialized, has_rated,
+    increment_trade_counter, is_initialized, is_paused, mark_rated, remove_arbitrator,
+    save_arbitrator, save_arbitrator_reputation, save_trade, set_accumulated_fees, set_admin,
+    set_currency_fees, set_fee_bps, set_initialized, set_paused, set_trade_counter,
+    set_usdc_token, CrossChainInfo, InsurancePolicy,
+    has_insurance_provider, save_insurance_provider, remove_insurance_provider,
 };
 
 fn require_initialized(env: &Env) -> Result<(), ContractError> {
@@ -133,6 +178,110 @@ impl StellarEscrowContract {
 
     pub fn is_arbitrator_registered(env: Env, arbitrator: Address) -> bool {
         storage::has_arbitrator(&env, &arbitrator)
+    // -------------------------------------------------------------------------
+    // Multi-Signature Arbitration
+    // -------------------------------------------------------------------------
+
+    /// Create a trade with multi-signature arbitration.
+    /// All arbitrators in `config` must be registered; threshold must be > 0
+    /// and ≤ arbitrators count.
+
+    /// Cast a vote on a disputed multi-sig trade.
+    pub fn cast_vote(
+        env: Env,
+        trade_id: u64,
+        arbitrator: Address,
+        resolution: DisputeResolution,
+    ) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        multisig::cast_vote(&env, trade_id, &arbitrator, resolution)
+    }
+
+    /// Return the current voting state for a multi-sig trade.
+    pub fn get_voting_summary(env: Env, trade_id: u64) -> Result<VotingSummary, ContractError> {
+        require_initialized(&env)?;
+        multisig::voting_summary(&env, trade_id)
+    }
+
+    /// Force-resolve a multi-sig dispute after the voting window expires without
+    /// consensus. Defaults to refunding the buyer. Admin only.
+    pub fn resolve_expired_dispute(
+        env: Env,
+        admin: Address,
+        trade_id: u64,
+    ) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        require_admin(&env, &admin)?;
+        let resolution = multisig::resolve_expired_dispute(&env, trade_id, &admin)?;
+        let trade = get_trade(&env, trade_id)?;
+        StellarEscrowContract::execute_dispute_resolution(env, trade_id, resolution, trade)
+    }
+
+    // -------------------------------------------------------------------------
+
+    /// Rate the arbitrator of a disputed trade (buyer or seller, once each).
+    pub fn rate_arbitrator(
+        env: Env,
+        trade_id: u64,
+        rater: Address,
+        stars: u32,
+    ) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        let trade = get_trade(&env, trade_id)?;
+        let arbitrator = match &trade.arbitrator {
+            Some(arb) => arb.clone(),
+            None => return Err(ContractError::NoArbitrator),
+        };
+        rater.require_auth();
+        reputation::rate_arbitrator(
+            &env,
+            trade_id,
+            &rater,
+            &arbitrator,
+            &trade.buyer,
+            &trade.seller,
+            &trade.status,
+            stars,
+        )
+    }
+
+    /// Raw reputation record for an arbitrator.
+    pub fn get_arbitrator_reputation(env: Env, arbitrator: Address) -> ArbitratorReputation {
+        storage::get_arbitrator_reputation(&env, &arbitrator)
+    }
+
+    /// Average star rating ×100 (e.g. 450 = 4.50 stars). Returns 0 if unrated.
+    pub fn get_arbitrator_avg_rating(env: Env, arbitrator: Address) -> u32 {
+        reputation::average_rating_x100(&storage::get_arbitrator_reputation(&env, &arbitrator))
+    }
+
+    /// Resolution rate in basis points (0–10000).
+    pub fn get_arbitrator_resolution_rate(env: Env, arbitrator: Address) -> u32 {
+        reputation::resolution_rate_bps(&storage::get_arbitrator_reputation(&env, &arbitrator))
+    }
+
+    /// Composite reputation score (0–10000).
+    pub fn get_arbitrator_score(env: Env, arbitrator: Address) -> u32 {
+        reputation::composite_score(&storage::get_arbitrator_reputation(&env, &arbitrator))
+    }
+
+    /// From a candidate list, return the registered arbitrator with the highest score.
+    pub fn select_best_arbitrator(
+        env: Env,
+        candidates: soroban_sdk::Vec<Address>,
+    ) -> Result<Address, ContractError> {
+        require_initialized(&env)?;
+        reputation::select_best_arbitrator(&env, &candidates)
+    }
+
+    /// Reputation records for all arbitrators in the supplied list (same order).
+    pub fn get_arbitrator_reputations(
+        env: Env,
+        arbitrators: soroban_sdk::Vec<Address>,
+    ) -> soroban_sdk::Vec<ArbitratorReputation> {
+        reputation::get_reputations(&env, &arbitrators)
     }
 
     pub fn update_fee(env: Env, fee_bps: u32) -> Result<(), ContractError> {
@@ -149,6 +298,58 @@ impl StellarEscrowContract {
 
     pub fn get_platform_fee_bps(env: Env) -> Result<u32, ContractError> {
         storage::get_fee_bps(&env)
+    // -------------------------------------------------------------------------
+    // Trade Insurance
+    // -------------------------------------------------------------------------
+
+    /// Register an insurance provider (admin only)
+    pub fn register_insurance_provider(env: Env, provider: Address) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+        save_insurance_provider(&env, &provider);
+        events::emit_insurance_provider_registered(&env, provider);
+        Ok(())
+    }
+
+    /// Remove an insurance provider (admin only)
+    pub fn remove_insurance_provider_fn(env: Env, provider: Address) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+        remove_insurance_provider(&env, &provider);
+        events::emit_insurance_provider_removed(&env, provider);
+        Ok(())
+    }
+
+    /// Purchase optional trade insurance for a created trade
+    pub fn purchase_insurance(
+        env: Env,
+        trade_id: u64,
+        buyer: Address,
+        provider: Address,
+    ) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        insurance::purchase_insurance(&env, trade_id, buyer, provider)
+    }
+
+    /// Claim insurance payout for a disputed trade
+    pub fn claim_insurance(
+        env: Env,
+        trade_id: u64,
+        recipient: Address,
+    ) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        insurance::claim_insurance(&env, trade_id, recipient)
+    }
+
+    /// Calculate insurance premium for a given trade amount
+    pub fn get_insurance_premium(env: Env, amount: u64, provider: Address) -> u64 {
+        insurance::calculate_premium(&env, amount, &provider)
     }
 
     pub fn set_user_compliance(
@@ -226,6 +427,10 @@ impl StellarEscrowContract {
         amount: u64,
         arbitrator: Option<Address>,
         metadata: OptionalMetadata,
+        expiry_time: Option<u64>,
+        currency: Option<Address>,
+        metadata: Option<soroban_sdk::String>,
+        trigger: Option<PriceTrigger>,
     ) -> Result<u64, ContractError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -246,6 +451,103 @@ impl StellarEscrowContract {
             None => None,
         };
         let trade_id = storage::increment_trade_counter(&env)?;
+        }
+        if let Some(ref meta) = metadata {
+            validate_metadata(meta)?;
+        }
+        // Default to USDC when no currency specified (backward compat)
+        let token = currency.unwrap_or(get_usdc_token(&env)?);
+        validate_metadata(&metadata)?;
+        let trade_id = increment_trade_counter(&env)?;
+        let fee_bps = get_fee_bps(&env)?;
+        let effective_bps = tiers::effective_fee_bps(&env, &seller, fee_bps);
+        let discount = subscription::subscription_discount_bps(&env, &seller);
+        let final_bps = effective_bps.saturating_sub(discount);
+        let fee = amount
+            .checked_mul(final_bps as u64)
+            .ok_or(ContractError::Overflow)?
+            .checked_div(10000)
+            .ok_or(ContractError::Overflow)?;
+
+        let fee = calc_fee(&env, &seller, amount)?;
+        let arbitrator_config = arbitrator.map(ArbitrationConfig::Single);
+        let trade = Trade {
+            id: trade_id,
+            seller: seller.clone(),
+            buyer: buyer.clone(),
+            amount,
+            fee,
+            arbitrator: arbitrator_config,
+            status: TradeStatus::Created,
+            expiry_time,
+            currency: token,
+            metadata,
+            trigger,
+        };
+        save_trade(&env, trade_id, &trade);
+        events::emit_trade_created(&env, trade_id, seller.clone(), buyer.clone(), amount);
+        events::emit_compliance_passed(&env, trade_id, seller, buyer, amount);
+        analytics::on_trade_created(&env, amount, &trade.seller, &trade.buyer);
+        Ok(trade_id)
+    }
+
+    /// Create a new trade with multi-signature arbitration for high-value trades.
+    /// Requires that all specified arbitrators are registered.
+    pub fn create_multisig_trade(
+        env: Env,
+        seller: Address,
+        buyer: Address,
+        amount: u64,
+        multisig_config: MultiSigConfig,
+        expiry_time: Option<u64>,
+        currency: Option<Address>,
+        metadata: Option<soroban_sdk::String>,
+        trigger: Option<PriceTrigger>,
+    ) -> Result<u64, ContractError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        if amount == 0 {
+            return Err(ContractError::InvalidAmount);
+        }
+
+        // Validate multi-sig configuration
+        if multisig_config.arbitrators.len() < multisig_config.threshold as u32 {
+            return Err(ContractError::InvalidMultiSigConfig);
+        }
+        if multisig_config.threshold == 0 {
+            return Err(ContractError::InvalidMultiSigConfig);
+        }
+
+        // Validate all arbitrators are registered
+        for i in 0..multisig_config.arbitrators.len() {
+            let arb = multisig_config.arbitrators.get(i).unwrap();
+            if !has_arbitrator(&env, &arb) {
+                return Err(ContractError::ArbitratorNotRegistered);
+            }
+        }
+
+        // expiry_time must be in the future (Stellar ledger time is UTC seconds)
+        if let Some(expiry) = expiry_time {
+            let now = env.ledger().timestamp();
+            if expiry <= now {
+                return Err(ContractError::InvalidExpiry);
+            }
+        }
+
+        seller.require_auth();
+        validate_user_compliance(&env, &seller, amount)?;
+        validate_user_compliance(&env, &buyer, amount)?;
+
+        if let Some(ref meta) = metadata {
+            validate_metadata(meta)?;
+        }
+
+        // Default to USDC when no currency specified (backward compat)
+        let token = currency.unwrap_or(get_usdc_token(&env)?);
+        validate_metadata(&metadata)?;
+
+        let trade_id = increment_trade_counter(&env)?;
+        let fee = calc_fee(&env, &seller, amount)?;
         let trade = Trade {
             id: trade_id,
             seller: seller.clone(),
@@ -257,6 +559,7 @@ impl StellarEscrowContract {
             expiry_time: None,
             currency: storage::get_usdc_token(&env)?,
             metadata,
+            trigger,
         };
         storage::save_trade(&env, trade_id, &trade);
         events::emit_trade_created(&env, trade_id, seller.clone(), buyer.clone(), amount, trade.currency.clone());
@@ -334,6 +637,9 @@ impl StellarEscrowContract {
         let mut trade = storage::get_trade(&env, trade_id)?;
         if trade.status != TradeStatus::Created {
             return Err(ContractError::InvalidStatus);
+    pub fn raise_dispute(env: Env, trade_id: u64, caller: Address) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
         }
         trade.seller.require_auth();
         trade.status = TradeStatus::Cancelled;
@@ -368,6 +674,8 @@ impl StellarEscrowContract {
         Ok(())
     }
 
+    /// Use `DisputeResolution::Partial { buyer_bps }` for a split:
+    /// `buyer_bps` is the buyer's share of the net payout in basis points (0–10000).
     pub fn resolve_dispute(
         env: Env,
         trade_id: u64,
@@ -442,6 +750,36 @@ impl StellarEscrowContract {
         let fees = storage::get_accumulated_fees(&env)?;
         if fees == 0 {
             return Err(ContractError::NoFeesToWithdraw);
+        require_not_paused(&env)?;
+        let mut trade = get_trade(&env, trade_id)?;
+        if trade.status != TradeStatus::Created {
+            return Err(ContractError::InvalidStatus);
+        }
+        trade.seller.require_auth();
+        trade.status = TradeStatus::Cancelled;
+        save_trade(&env, trade_id, &trade);
+        events::emit_trade_cancelled(&env, trade_id);
+        analytics::on_trade_cancelled(&env);
+        Ok(())
+    }
+
+    /// anyone can call this once the expiry has
+    /// passed and the trade is Funded or Completed (not Disputed/Cancelled).
+    /// Funds are released to the seller minus the platform fee.
+    pub fn claim_time_release(env: Env, trade_id: u64) -> Result<(), ContractError> {
+        if !is_initialized(&env) {
+            return Err(ContractError::NotInitialized);
+        }
+        require_not_paused(&env)?;
+
+        let trade = get_trade(&env, trade_id)?;
+        if trade.status != TradeStatus::Funded && trade.status != TradeStatus::Completed {
+            return Err(ContractError::InvalidStatus);
+        }
+        let expiry = trade.expiry_time.ok_or(ContractError::InvalidExpiry)?;
+        // Stellar ledger timestamp is always UTC seconds — no timezone handling needed
+        if env.ledger().timestamp() < expiry {
+            return Err(ContractError::TradeNotExpired);
         }
         usdc_client(&env)?.transfer(&env.current_contract_address(), &to, &(fees as i128));
         storage::set_accumulated_fees(&env, 0);
@@ -453,6 +791,159 @@ impl StellarEscrowContract {
         storage::get_accumulated_fees(&env)
     }
 
+    /// Get platform fee in basis points
+    pub fn get_platform_fee_bps(env: Env) -> Result<u32, ContractError> {
+        get_fee_bps(&env)
+    }
+
+    // -------------------------------------------------------------------------
+    // Advanced Query Functions
+    // -------------------------------------------------------------------------
+
+    /// Filter, sort, and paginate trades.
+    ///
+    /// - `filter`: optional criteria (status, participant, amount range, id range)
+    /// - `page`: pagination + sort options (offset, limit ≤ 100, sort_by, direction)
+    pub fn query_trades(
+        env: Env,
+        filter: queries::TradeFilter,
+        page: queries::PageParams,
+    ) -> Result<soroban_sdk::Vec<Trade>, ContractError> {
+        require_initialized(&env)?;
+        queries::query_trades(&env, filter, page)
+    }
+
+    /// Aggregate statistics (count, volume, fees, min/max amount) over filtered trades.
+    pub fn aggregate_trades(
+        env: Env,
+        filter: queries::TradeFilter,
+    ) -> Result<queries::TradeStats, ContractError> {
+        require_initialized(&env)?;
+        queries::aggregate_trades(&env, filter)
+    }
+
+    // -------------------------------------------------------------------------
+    // Oracle Integration
+    // -------------------------------------------------------------------------
+
+    /// Register a price oracle contract for a `base`/`quote` asset pair (admin only).
+    /// `priority`: lower = queried first. Up to 5 oracles per pair.
+    pub fn register_oracle(
+        env: Env,
+        base: Address,
+        quote: Address,
+        oracle: Address,
+        priority: u32,
+    ) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        get_admin(&env)?.require_auth();
+        oracle::register_oracle(&env, &base, &quote, oracle, priority)
+    }
+
+    /// Remove a price oracle for a `base`/`quote` pair (admin only).
+    pub fn remove_oracle(
+        env: Env,
+        base: Address,
+        quote: Address,
+        oracle: Address,
+    ) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        get_admin(&env)?.require_auth();
+        oracle::remove_oracle(&env, &base, &quote, &oracle)
+    }
+
+    /// List all registered oracles for a `base`/`quote` pair.
+    pub fn get_oracles(
+        env: Env,
+        base: Address,
+        quote: Address,
+    ) -> soroban_sdk::Vec<oracle::OracleEntry> {
+        oracle::get_oracles(&env, &base, &quote)
+    }
+
+    /// Fetch the current price for `base`/`quote` from registered oracles.
+    /// Queries in priority order; returns first fresh (non-stale) response.
+    /// Returns `Err(OracleUnavailable)` if all sources fail or are stale.
+    pub fn get_oracle_price(
+        env: Env,
+        base: Address,
+        quote: Address,
+    ) -> Result<oracle::PriceData, ContractError> {
+        oracle::get_price(&env, &base, &quote)
+    }
+
+    /// Validate that `trade_amount` falls within `[min_usd, max_usd]` at the
+    /// current oracle price. Bounds are in oracle-scaled units (value × 10^decimals).
+    /// Returns `Err(OracleUnavailable)` on oracle failure — caller decides whether to block.
+    pub fn validate_trade_price(
+        env: Env,
+        base: Address,
+        quote: Address,
+        trade_amount: u64,
+        min_usd: i128,
+        max_usd: i128,
+    ) -> Result<oracle::PriceValidation, ContractError> {
+        oracle::validate_trade_price(&env, &base, &quote, trade_amount, min_usd, max_usd)
+    }
+
+    /// Check and execute a price trigger for a trade.
+    /// Can be called by anyone; trigger logic is automated based on oracle price.
+    pub fn execute_price_trigger(env: Env, trade_id: u64) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        let mut trade = get_trade(&env, trade_id)?;
+        let trigger = match &trade.trigger {
+            Some(t) => t.clone(),
+            None => return Err(ContractError::NoTrigger),
+        };
+        // Trigger can only execute for funded trades
+        if trade.status != TradeStatus::Funded {
+            return Err(ContractError::InvalidStatus);
+        }
+
+        if oracle::check_trigger(&env, &trigger)? {
+            match trigger.action {
+                TriggerAction::Cancel => {
+                    // Refund entire escrowed amount to buyer
+                    let token_client = token::Client::new(&env, &trade.currency);
+                    token_client.transfer(
+                        &env.current_contract_address(),
+                        &trade.buyer,
+                        &(trade.amount as i128),
+                    );
+                    trade.status = TradeStatus::Cancelled;
+                }
+                TriggerAction::Release => {
+                    // Release to seller, minus platform fee
+                    let token_client = token::Client::new(&env, &trade.currency);
+                    let payout = trade.amount.checked_sub(trade.fee).ok_or(ContractError::Overflow)?;
+                    token_client.transfer(
+                        &env.current_contract_address(),
+                        &trade.seller,
+                        &(payout as i128),
+                    );
+                    // Add fee to contract's accumulated revenue
+                    let current_fees = storage::get_currency_fees(&env, &trade.currency);
+                    let new_fees = current_fees.checked_add(trade.fee).ok_or(ContractError::Overflow)?;
+                    storage::set_currency_fees(&env, &trade.currency, new_fees);
+                    storage::add_accumulated_fees(&env, trade.fee)?;
+                    trade.status = TradeStatus::Triggered;
+                }
+            }
+            save_trade(&env, trade_id, &trade);
+            events::emit_trigger_executed(&env, trade_id, &trigger.action);
+        } else {
+            return Err(ContractError::PriceConditionNotMet);
+        }
+
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Emergency Pause
+    // -------------------------------------------------------------------------
+
+    /// Pause all contract operations (admin only).
     pub fn pause(env: Env) -> Result<(), ContractError> {
         require_initialized(&env)?;
         let admin = storage::get_admin(&env)?;
@@ -471,6 +962,24 @@ impl StellarEscrowContract {
         Ok(())
     }
 
+    /// Emergency withdrawal of all contract token balance (admin only).
+    /// Allowed even while paused so funds can always be recovered.
+    pub fn emergency_withdraw(env: Env, to: Address) -> Result<(), ContractError> {
+        require_initialized(&env)?;
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+        let token = get_usdc_token(&env)?;
+        let token_client = token::Client::new(&env, &token);
+        let balance = token_client.balance(&env.current_contract_address());
+        if balance > 0 {
+            token_client.transfer(&env.current_contract_address(), &to, &balance);
+        }
+        set_accumulated_fees(&env, 0);
+        events::emit_emergency_withdraw(&env, to, balance as u64);
+        Ok(())
+    }
+
+    /// Returns true if the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
         storage::is_paused(&env)
     }
@@ -543,6 +1052,9 @@ impl StellarEscrowContract {
             expiry_time: None,
             currency: storage::get_usdc_token(&env)?,
             metadata: OptionalMetadata::None,
+            currency: get_usdc_token(&env)?,
+            metadata: None,
+            trigger: None,
         };
         storage::save_trade(&env, trade_id, &trade);
         storage::save_cross_chain_info(
