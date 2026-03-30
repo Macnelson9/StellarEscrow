@@ -375,6 +375,8 @@ pub struct EvOracleRemoved    { pub v: u32, pub base: Address, pub quote: Addres
 pub struct EvOraclePriceFetched { pub v: u32, pub base: Address, pub quote: Address, pub price: i128, pub decimals: u32 }
 #[contracttype] #[derive(Clone, Debug)]
 pub struct EvOracleUnavailable  { pub v: u32, pub base: Address, pub quote: Address }
+#[contracttype] #[derive(Clone, Debug)]
+pub struct EvTriggerExecuted    { pub v: u32, pub trade_id: u64, pub action: crate::types::TriggerAction }
 
 pub fn emit_oracle_registered(env: &Env, base: Address, quote: Address, oracle: Address, priority: u32) {
     env.events().publish((cat_oracle(), symbol_short!("orc_reg")), EvOracleRegistered { v: EVENT_VERSION, base, quote, oracle, priority });
@@ -387,6 +389,9 @@ pub fn emit_oracle_price_fetched(env: &Env, base: Address, quote: Address, price
 }
 pub fn emit_oracle_unavailable(env: &Env, base: Address, quote: Address) {
     env.events().publish((cat_oracle(), symbol_short!("orc_err")), EvOracleUnavailable { v: EVENT_VERSION, base, quote });
+}
+pub fn emit_trigger_executed(env: &Env, trade_id: u64, action: &crate::types::TriggerAction) {
+    env.events().publish((cat_oracle(), symbol_short!("trig_ex")), EvTriggerExecuted { v: EVENT_VERSION, trade_id, action: action.clone() });
 }
 
 // ---------------------------------------------------------------------------
