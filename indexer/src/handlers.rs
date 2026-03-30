@@ -25,7 +25,7 @@ use crate::models::{
     AuditQuery, DiscoveryQuery, Event, EventQuery, EventStats, GlobalSearchQuery,
     GlobalSearchResponse, HistoryQuery, IndexerStatus, NewAuditLog, PagedResponse,
     PaginatedResponse, ReplayRequest, RetentionRequest, RetentionResponse, StatsResponse,
-    SuggestionQuery, TradeSearchQuery, WebSocketMessage,
+    SuggestionQuery, TradeSearchQuery, UserProfile, WebSocketMessage,
 };
 use crate::websocket::WebSocketManager;
 
@@ -320,6 +320,7 @@ pub async fn global_search(
     let users = state.database.discover_entities(&user_query).await?;
     let arbitrators = state.database.discover_entities(&arb_query).await?;
     let suggestions = state.database.get_search_suggestions(&params.q, 10).await?;
+    let profiles = state.database.search_users(&params.q, limit, 0).await?;
 
     state.database.record_search(&params.q, "global").await?;
 
@@ -327,6 +328,7 @@ pub async fn global_search(
         trades,
         users,
         arbitrators,
+        profiles,
         suggestions,
     }))
 }

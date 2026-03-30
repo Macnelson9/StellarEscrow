@@ -365,6 +365,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/webhooks/stats", get(get_webhook_stats))
         // Users
         .route("/users", post(user_handlers::register_user))
+        .route("/users/search", get(user_handlers::search_users))
         .route(
             "/users/:address",
             get(user_handlers::get_user).patch(user_handlers::update_user),

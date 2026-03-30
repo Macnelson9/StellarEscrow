@@ -559,8 +559,8 @@ impl Database {
         let limit = query.limit.unwrap_or(25).clamp(1, 100);
         let offset = query.offset.unwrap_or(0).max(0);
         let q = query.q.clone().unwrap_or_default();
-        let q_pattern = format!("%{}%", q);
 
+        // Use full-text search when a query term is provided, fall back to no filter
         let rows = sqlx::query_as::<_, TradeSearchResult>(
             r#"
             WITH latest_trade_events AS (
@@ -574,10 +574,11 @@ impl Database {
             trade_base AS (
                 SELECT
                     (e.data->>'trade_id')::BIGINT AS trade_id,
-                    e.data->>'seller' AS seller,
-                    e.data->>'buyer' AS buyer,
-                    (e.data->>'amount')::BIGINT AS amount,
-                    e.timestamp AS created_at
+                    e.data->>'seller'             AS seller,
+                    e.data->>'buyer'              AS buyer,
+                    (e.data->>'amount')::BIGINT   AS amount,
+                    e.timestamp                   AS created_at,
+                    e.search_vec
                 FROM events e
                 WHERE e.event_type = 'trade_created'
             )
@@ -591,18 +592,19 @@ impl Database {
             FROM trade_base tb
             JOIN latest_trade_events lte ON lte.trade_id = tb.trade_id
             WHERE
-                ($1 = '' OR tb.trade_id::TEXT ILIKE $2 OR tb.seller ILIKE $2 OR tb.buyer ILIKE $2)
-                AND ($3::TEXT IS NULL OR lte.event_type = $3)
-                AND ($4::TEXT IS NULL OR tb.seller = $4)
-                AND ($5::TEXT IS NULL OR tb.buyer = $5)
-                AND ($6::BIGINT IS NULL OR tb.amount >= $6)
-                AND ($7::BIGINT IS NULL OR tb.amount <= $7)
-            ORDER BY tb.created_at DESC
-            LIMIT $8 OFFSET $9
+                ($1 = '' OR tb.search_vec @@ plainto_tsquery('english', $1))
+                AND ($2::TEXT IS NULL OR lte.event_type = $2)
+                AND ($3::TEXT IS NULL OR tb.seller = $3)
+                AND ($4::TEXT IS NULL OR tb.buyer = $4)
+                AND ($5::BIGINT IS NULL OR tb.amount >= $5)
+                AND ($6::BIGINT IS NULL OR tb.amount <= $6)
+            ORDER BY
+                CASE WHEN $1 = '' THEN 0 ELSE ts_rank(tb.search_vec, plainto_tsquery('english', $1)) END DESC,
+                tb.created_at DESC
+            LIMIT $7 OFFSET $8
             "#,
         )
         .bind(q.as_str())
-        .bind(q_pattern.as_str())
         .bind(query.status.as_deref())
         .bind(query.seller.as_deref())
         .bind(query.buyer.as_deref())
@@ -622,20 +624,19 @@ impl Database {
     ) -> Result<Vec<DiscoveryResult>, AppError> {
         let limit = query.limit.unwrap_or(25).clamp(1, 100);
         let q = query.q.clone().unwrap_or_default();
-        let q_pattern = format!("%{}%", q);
 
         let rows = sqlx::query_as::<_, DiscoveryResult>(
             r#"
             WITH entities AS (
-                SELECT data->>'seller' AS address, 'user' AS role, timestamp
+                SELECT data->>'seller' AS address, 'user' AS role, timestamp, search_vec
                 FROM events
                 WHERE event_type = 'trade_created' AND data->>'seller' IS NOT NULL
                 UNION ALL
-                SELECT data->>'buyer' AS address, 'user' AS role, timestamp
+                SELECT data->>'buyer' AS address, 'user' AS role, timestamp, search_vec
                 FROM events
                 WHERE event_type = 'trade_created' AND data->>'buyer' IS NOT NULL
                 UNION ALL
-                SELECT data->>'arbitrator' AS address, 'arbitrator' AS role, timestamp
+                SELECT data->>'arbitrator' AS address, 'arbitrator' AS role, timestamp, search_vec
                 FROM events
                 WHERE event_type = 'arb_reg' AND data->>'arbitrator' IS NOT NULL
             )
@@ -646,20 +647,47 @@ impl Database {
                 MAX(timestamp) AS last_seen
             FROM entities
             WHERE
-                ($1 = '' OR address ILIKE $2)
-                AND ($3::TEXT IS NULL OR role = $3)
+                ($1 = '' OR search_vec @@ plainto_tsquery('english', $1))
+                AND ($2::TEXT IS NULL OR role = $2)
             GROUP BY address, role
             ORDER BY seen_count DESC, last_seen DESC
-            LIMIT $4
+            LIMIT $3
             "#,
         )
         .bind(q.as_str())
-        .bind(q_pattern.as_str())
         .bind(query.role.as_deref())
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
+        Ok(rows)
+    }
+
+    /// Full-text search over registered user profiles.
+    pub async fn search_users(
+        &self,
+        q: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<crate::models::UserProfile>, AppError> {
+        let rows = sqlx::query_as::<_, crate::models::UserProfile>(
+            r#"
+            SELECT *
+            FROM user_profiles
+            WHERE $1 = '' OR search_vec @@ plainto_tsquery('english', $1)
+            ORDER BY
+                CASE WHEN $1 = '' THEN 0
+                     ELSE ts_rank(search_vec, plainto_tsquery('english', $1))
+                END DESC,
+                registered_at DESC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(q)
+        .bind(limit.clamp(1, 100))
+        .bind(offset.max(0))
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows)
     }
 

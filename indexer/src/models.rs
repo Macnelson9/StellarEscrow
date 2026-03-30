@@ -317,6 +317,7 @@ pub struct GlobalSearchResponse {
     pub trades: Vec<TradeSearchResult>,
     pub users: Vec<DiscoveryResult>,
     pub arbitrators: Vec<DiscoveryResult>,
+    pub profiles: Vec<UserProfile>,
     pub suggestions: Vec<SearchSuggestion>,
 }
 
@@ -630,6 +631,13 @@ pub struct SetPreferenceRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetVerificationRequest {
     pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSearchQuery {
+    pub q: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushRegistrationRequest {
     pub device_token: String,
